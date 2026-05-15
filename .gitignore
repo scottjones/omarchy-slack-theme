@@ -1,0 +1,18 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor cruft
+*.swp
+*.swo
+*.bak
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# The generated native-messaging host manifest lives outside this repo at
+# ~/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts/com.omarchy.slack_theme.json
+# (or the equivalent path for Chrome/Chromium) — produced by install.sh.

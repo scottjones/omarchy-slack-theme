@@ -1,0 +1,872 @@
+const STYLE_ID = "omarchy-slack-style";
+let lastAppliedThemeKey = null;
+let lastSeenIsDark = null;
+
+// Clear any stale cached mode from earlier extension versions.
+try { chrome.storage.local.remove("lastSlackMode"); } catch (_) {}
+
+function hexToRgb(hex) {
+  const h = (hex || "").replace("#", "");
+  if (h.length < 6) return null;
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+function relLuminance({ r, g, b }) {
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function shade(hex, delta) {
+  const c = hexToRgb(hex);
+  if (!c) return hex;
+  const f = (v) => Math.max(0, Math.min(255, Math.round(v + delta * 255)));
+  return `rgb(${f(c.r)}, ${f(c.g)}, ${f(c.b)})`;
+}
+
+function withAlpha(hex, alpha) {
+  const c = hexToRgb(hex);
+  if (!c) return hex;
+  return `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
+}
+
+function applyTheme(theme) {
+  if (!theme || !theme.bg) return;
+  const bgRgb = hexToRgb(theme.bg);
+  if (!bgRgb) return;
+
+  // Skip if nothing changed since last apply.
+  const key = JSON.stringify(theme);
+  if (key === lastAppliedThemeKey) return;
+  lastAppliedThemeKey = key;
+
+  const isDark = relLuminance(bgRgb) < 0.5;
+  const fg = theme.fg || (isDark ? "#e6e6e6" : "#1f1f1f");
+  const accent = theme.accent || (isDark ? "#7aa2f7" : "#1264a3");
+
+  // delta direction: lighter shades on dark themes, darker shades on light themes
+  const dir = isDark ? +1 : -1;
+  const sidebarBg = shade(theme.bg, dir * 0.04);
+  const navBg = shade(theme.bg, dir * 0.06);
+  const hoverBg = shade(theme.bg, dir * 0.08);
+  const borderColor = withAlpha(fg, 0.12);
+
+  document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+
+  // Harmless if Slack ever adds an OS-sync option.
+  document.dispatchEvent(
+    new CustomEvent("omarchy:set-color-scheme", { detail: { dark: isDark } })
+  );
+
+  // Drive Slack's actual Color Mode only when the mode crosses light↔dark.
+  if (lastSeenIsDark !== isDark) {
+    lastSeenIsDark = isDark;
+    // Verify with a fresh native-host read before touching Slack — guards
+    // against a stale cache when the user switches omarchy themes just
+    // before/during a Slack reload.
+    chrome.runtime.sendMessage({ type: "request-fresh-theme" }, (freshTheme) => {
+      if (freshTheme && freshTheme.bg) {
+        const freshRgb = hexToRgb(freshTheme.bg);
+        if (freshRgb) {
+          const freshIsDark = relLuminance(freshRgb) < 0.5;
+          if (freshIsDark !== isDark) {
+            console.log(
+              "[omarchy] stale theme; fresh says",
+              freshIsDark ? "dark" : "light",
+              "(was",
+              isDark ? "dark" : "light",
+              ") — re-applying"
+            );
+            // Re-run applyTheme with the fresh data; that re-triggers automation.
+            lastAppliedThemeKey = null;
+            lastSeenIsDark = null;
+            applyTheme(freshTheme);
+            return;
+          }
+        }
+      }
+      ensureSlackColorMode(isDark).catch((e) =>
+        console.warn("[omarchy] color-mode automation failed:", e)
+      );
+    });
+  }
+
+  const css = `
+    :root, html, body {
+      --omarchy-bg: ${theme.bg};
+      --omarchy-fg: ${fg};
+      --omarchy-accent: ${accent};
+      --omarchy-sidebar-bg: ${sidebarBg};
+      --omarchy-nav-bg: ${navBg};
+      --omarchy-hover-bg: ${hoverBg};
+      --omarchy-border: ${borderColor};
+
+      /* Slack's "rainbow" sidebar theme tokens — these actually drive the
+         channel sidebar paint job in current Slack web. */
+      --rainbow-canvas: ${sidebarBg} !important;
+      --rainbow-canvas-2: ${navBg} !important;
+      --rainbow-text: ${fg} !important;
+      --rainbow-action: ${fg} !important;
+      --rainbow-action-hover: ${hoverBg} !important;
+      --rainbow-action-active: ${withAlpha(accent, 0.25)} !important;
+      --rainbow-action-active-text: ${fg} !important;
+      --rainbow-mention-badge: ${accent} !important;
+      --rainbow-mention-text: ${theme.bg} !important;
+
+      /* SK / SAF design tokens */
+      --sk_primary_background: ${theme.bg} !important;
+      --sk_primary_foreground: ${fg} !important;
+      --sk_secondary_background: ${sidebarBg} !important;
+      --sk_foreground_high: ${fg} !important;
+      --sk_foreground_max: ${fg} !important;
+      --sk_highlight: ${accent} !important;
+      --saf-0: ${theme.bg} !important;
+      --saf-1: ${sidebarBg} !important;
+      --saf-2: ${navBg} !important;
+      --saf-100: ${sidebarBg} !important;
+
+      /* Legacy sidebar tuple */
+      --sidebar-background: ${sidebarBg} !important;
+      --sidebar-text: ${fg} !important;
+      --sidebar-text-hover: ${fg} !important;
+      --sidebar-text-active: ${fg} !important;
+      --sidebar-text-active-bg: ${hoverBg} !important;
+      --sidebar-mention-badge: ${accent} !important;
+      --sidebar-unread-count-bg: ${accent} !important;
+      --sidebar-channel-text: ${fg} !important;
+      --sidebar-channel-icon: ${withAlpha(fg, 0.6)} !important;
+      --sidebar-presence-online: ${accent} !important;
+    }
+
+    html, body { background-color: var(--omarchy-bg) !important; }
+
+    /* ===== main / message area ===== */
+    html body .p-client,
+    html body .p-client_workspace,
+    html body .p-client_workspace__layout,
+    html body .p-workspace,
+    html body [class*="p-workspace__primary_view"],
+    html body [class*="primary_view_body"],
+    html body [class*="primary_view_contents"],
+    html body [class*="view_contents"],
+    html body [class*="message_pane"],
+    html body [class*="p-threads_view"],
+    html body [class*="channel_info_pane"],
+    html body .c-virtual_list__scroll_container,
+    html body [class*="c-message_kit__background"] {
+      background-color: var(--omarchy-bg) !important;
+    }
+
+    /* ===== left tab rail (workspace switcher + Home/DMs/...) ===== */
+    html body [class*="tab_rail"],
+    html body [class*="workspace_switcher"],
+    html body [class*="nav_rail"],
+    html body [class*="rail__nav"],
+    html body [class*="p-ia4_tab_rail"],
+    html body [class*="p-ia__nav"],
+    html body nav[aria-label*="primary navigation" i],
+    html body nav[aria-label*="workspace" i] {
+      background-color: var(--omarchy-nav-bg) !important;
+      border-color: var(--omarchy-border) !important;
+    }
+
+    /* ===== channel sidebar — paint container AND any direct child that draws its own bg ===== */
+    html body [class*="channel_sidebar"],
+    html body [class*="p-channel_sidebar"],
+    html body [class*="p-ia4_channel_sidebar"],
+    html body [class*="left_nav"],
+    html body [class*="sidebar_list"],
+    html body [data-qa="channel_sidebar"],
+    html body [class*="p-ia__sidebar"],
+    html body [class*="p-ia4__sidebar"],
+    html body [class*="sidebar_layout"],
+    html body [class*="rainbow"] {
+      background-color: var(--omarchy-sidebar-bg) !important;
+      color: var(--omarchy-fg) !important;
+      border-color: var(--omarchy-border) !important;
+    }
+
+    /* sidebar headers / workspace menu — scoped to the channel sidebar only
+       so we don't blow away the background of the Ctrl+K switcher, prefs
+       dialog, or other modals that happen to contain "workspace" / "header"
+       class fragments. */
+    html body [class*="channel_sidebar"] [class*="sidebar_header"],
+    html body [class*="channel_sidebar"] [class*="workspace_menu"],
+    html body [class*="channel_sidebar"] [class*="workspace_header"],
+    html body [class*="channel_sidebar"] [class*="channel_sidebar__static_list"],
+    html body [class*="channel_sidebar"] [class*="channel_sidebar__list"],
+    html body [class*="p-ia__sidebar"] [class*="sidebar_header"],
+    html body [class*="p-ia4_channel_sidebar"] [class*="workspace_menu"] {
+      background-color: transparent !important;
+      color: var(--omarchy-fg) !important;
+    }
+
+    /* Defensive: stop transparency leaking into dialog/menu chrome from our
+       variable overrides. Just sets an opaque background — interior styling
+       is left to Slack's color mode (which we now auto-flip reliably). */
+    html body [role="dialog"]:not([aria-label="Huddle"]),
+    html body [role="menu"],
+    html body [class*="ReactModal__Content"] {
+      background-color: var(--omarchy-bg) !important;
+    }
+
+    /* hovered + selected channel rows */
+    html body [class*="channel_sidebar__channel"]:hover,
+    html body [class*="sidebar_link"]:hover,
+    html body [class*="p-channel_sidebar__channel--hover"] {
+      background-color: var(--omarchy-hover-bg) !important;
+    }
+    html body [class*="channel_sidebar__channel--selected"],
+    html body [class*="sidebar_link--selected"],
+    html body [class*="p-channel_sidebar__channel--selected"],
+    html body [aria-selected="true"][class*="sidebar"],
+    html body [aria-current="true"][class*="sidebar"],
+    html body [class*="virtual_list__item--selected"] {
+      background-color: ${withAlpha(accent, 0.35)} !important;
+      color: var(--omarchy-fg) !important;
+      outline: none !important;
+      box-shadow: none !important;
+      border-color: transparent !important;
+    }
+    html body [class*="channel_sidebar__channel--selected"] *,
+    html body [class*="sidebar_link--selected"] *,
+    html body [aria-selected="true"][class*="sidebar"] * {
+      color: var(--omarchy-fg) !important;
+      background-color: transparent !important;
+    }
+
+    /* ===== top nav (the search bar row) ===== */
+    html body [class*="top_nav"],
+    html body [class*="p-ia4_top_nav"],
+    html body [class*="p-ia__top_nav"],
+    html body [class*="p-classic_nav"],
+    html body [class*="p-view_header"]:not([class*="message_view_header"]),
+    html body [class*="p-ia__view_header"] {
+      background-color: var(--omarchy-nav-bg) !important;
+      border-color: var(--omarchy-border) !important;
+      color: var(--omarchy-fg) !important;
+    }
+
+    /* search input pill */
+    html body [class*="top_nav__search"],
+    html body [class*="search_input"],
+    html body [class*="p-top_nav__search_container"],
+    html body [class*="p-top_nav__search"] {
+      background-color: var(--omarchy-bg) !important;
+      color: var(--omarchy-fg) !important;
+      border-color: var(--omarchy-border) !important;
+    }
+
+    /* ===== channel header tab bar ("Messages / Add canvas / Files / +")
+            AND its right-side action strip — Slack puts these in different
+            class fragments, so we cast a wide net. Excludes the prefs dialog's
+            tab menu, which uses the same c-tabs base class. ===== */
+    html body [class*="p-message_pane_header"],
+    html body [class*="p-message_pane__tab"],
+    html body [class*="p-tab_container"],
+    html body [class*="p-view_header__tab"],
+    html body [class*="p-view_header__actions"],
+    html body [class*="p-view_header__buttons"],
+    html body [class*="p-message_pane__actions"],
+    html body [class*="p-message_pane_actions"],
+    html body [class*="p-tab_container__action"],
+    html body [class*="p-action_buttons"],
+    html body [class*="c-tabs__tab_menu"]:not(.p-prefs_dialog__menu):not([data-qa="tabs_full_width_class"]),
+    html body [class*="c-tabs"]:not([class*="prefs"]):not([data-qa="tabs_full_width_class"]) {
+      background-color: var(--omarchy-bg) !important;
+      color: var(--omarchy-fg) !important;
+      border-color: var(--omarchy-border) !important;
+    }
+
+    /* (Removed the aggressive "transparent" rule for view_header / message_pane_header
+       children — it was a workaround for the black-strip bug when Slack mode
+       was out of sync with omarchy. With auto-flip reliable, Slack paints
+       those children correctly and the rule was instead causing messages to
+       bleed through the tab strip.) */
+
+    /* ===== message hover ===== */
+    html body [class*="c-message_kit__hover"]:hover,
+    html body [class*="c-message_kit__background--hovered"] {
+      background-color: var(--omarchy-hover-bg) !important;
+    }
+
+    /* The floating message action toolbar (react/reply/forward) is now
+       handled by Slack's color mode — auto-flip keeps it correct. */
+
+    /* ===== floating pills in the message stream — paint the inner label
+            AND the button it contains, so the date pill always covers the
+            horizontal line and any message text behind it. ===== */
+    html body [class*="day_divider"] [class*="label"],
+    html body [class*="day_divider"] button,
+    html body [class*="day_divider__label"],
+    html body [class*="date_divider"] [class*="label"],
+    html body [class*="date_divider"] button,
+    html body [class*="divider__label"],
+    html body [class*="new_messages_marker"],
+    html body [class*="new_messages_pill"],
+    html body [class*="unread_divider"] [class*="label"],
+    html body [class*="unread_divider"] button {
+      background-color: var(--omarchy-nav-bg) !important;
+      color: var(--omarchy-fg) !important;
+    }
+
+    /* ===== message composer / input area ===== */
+    html body [class*="p-message_pane_input"],
+    html body [class*="p-workspace__input"],
+    html body [class*="p-message_input"],
+    html body [class*="c-texty_input"],
+    html body [class*="ql-toolbar"],
+    html body [class*="ql-container"],
+    html body [class*="ql-editor"],
+    html body [class*="texty_input_unstyled"],
+    html body [data-qa="message_input"],
+    html body [contenteditable="true"][data-qa*="message"],
+    html body [contenteditable="true"][aria-label*="message" i] {
+      background-color: var(--omarchy-nav-bg) !important;
+      color: var(--omarchy-fg) !important;
+      border-color: var(--omarchy-border) !important;
+    }
+
+    /* the composer outer container / formatting toolbar row */
+    html body [class*="p-composer"],
+    html body [class*="c-wysiwyg_container"],
+    html body [class*="p-rich_text_input"],
+    html body [class*="p-message_input_field"],
+    html body [class*="p-message_input__primary_container"] {
+      background-color: var(--omarchy-nav-bg) !important;
+      color: var(--omarchy-fg) !important;
+    }
+
+    /* placeholder text */
+    html body [contenteditable="true"][data-qa*="message"]::before,
+    html body [class*="ql-editor"].ql-blank::before {
+      color: ${withAlpha(fg, 0.5)} !important;
+    }
+
+    /* ===== text readability: force fg on anything inside our themed panels =====
+       Slack's per-mode colors don't know we've repainted the bg, so labels go
+       invisible on the opposite-luminance bg. Force them. */
+    html body [class*="tab_rail"] *:not([class*="badge"]):not([class*="unread"]),
+    html body [class*="workspace_switcher"] *:not([class*="badge"]),
+    html body [class*="channel_sidebar"] [class*="channel_name"],
+    html body [class*="channel_sidebar"] [class*="channel_text"],
+    html body [class*="channel_sidebar"] [class*="text"],
+    html body [class*="channel_sidebar"] [class*="title"],
+    html body [class*="channel_sidebar"] [class*="link"],
+    html body [class*="channel_sidebar"] span,
+    html body [class*="channel_sidebar"] a,
+    html body [class*="channel_sidebar"] button,
+    html body [class*="sidebar_layout"] [class*="text"],
+    html body [class*="sidebar_layout"] [class*="title"],
+    html body [class*="top_nav"] *:not([class*="badge"]):not([class*="unread"]):not(svg):not(path),
+    html body [class*="p-view_header"] [class*="title"],
+    html body [class*="p-view_header"] [class*="text"] {
+      color: var(--omarchy-fg) !important;
+    }
+
+    /* SVG icons in the sidebar/top bar: tint them with fg so they stay visible */
+    html body [class*="tab_rail"] svg,
+    html body [class*="channel_sidebar"] svg:not([class*="emoji"]):not([data-stringify-type]),
+    html body [class*="top_nav"] svg:not([class*="emoji"]) {
+      color: var(--omarchy-fg) !important;
+      fill: currentColor;
+    }
+  `;
+
+  let style = document.getElementById(STYLE_ID);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = STYLE_ID;
+    (document.head || document.documentElement).appendChild(style);
+  }
+  if (style.textContent !== css) style.textContent = css;
+
+  // Slack sets sidebar theme variables on specific elements with high
+  // specificity — beat them by writing the same names inline on documentElement
+  // and body using setProperty(..., "important"). Inline-important wins.
+  const inlineVars = {
+    "--rainbow-canvas": sidebarBg,
+    "--rainbow-canvas-2": navBg,
+    "--rainbow-text": fg,
+    "--rainbow-action": fg,
+    "--rainbow-action-hover": hoverBg,
+    "--rainbow-action-active": withAlpha(accent, 0.28),
+    "--rainbow-action-active-text": fg,
+    "--rainbow-mention-badge": accent,
+    "--rainbow-mention-text": theme.bg,
+    "--sidebar-background": sidebarBg,
+    "--sidebar-text": fg,
+    "--sidebar-text-active-bg": hoverBg,
+    "--saf-0": theme.bg,
+    "--saf-1": sidebarBg,
+    "--saf-2": navBg,
+    "--saf-100": sidebarBg,
+  };
+  for (const [k, v] of Object.entries(inlineVars)) {
+    document.documentElement.style.setProperty(k, v, "important");
+    if (document.body) document.body.style.setProperty(k, v, "important");
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "omarchy-theme") applyTheme(msg.theme);
+});
+
+// Re-apply if Slack's SPA navigation tears down our <style> node.
+const observer = new MutationObserver(() => {
+  if (!document.getElementById(STYLE_ID)) {
+    chrome.runtime.sendMessage({ type: "request-theme" }, (theme) => {
+      if (theme) applyTheme(theme);
+    });
+  }
+});
+observer.observe(document.documentElement, { childList: true, subtree: true });
+
+chrome.runtime.sendMessage({ type: "request-theme" }, (theme) => {
+  if (theme) applyTheme(theme);
+});
+
+// ----------------------------------------------------------------------------
+// Programmatic click of Slack's Preferences → Appearance → Light/Dark button.
+// Slack doesn't expose a "Sync with OS" option in this build, so we open the
+// preferences modal off-screen, click the right radio, and close it.
+// ----------------------------------------------------------------------------
+
+const AUTOMATION_HIDE_ID = "omarchy-automation-hide";
+let automating = false;
+let lastAppliedMode = null; // "Light" | "Dark" | null
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function waitFor(predicate, timeout = 3000, interval = 50) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const result = predicate();
+    if (result) return result;
+    await sleep(interval);
+  }
+  return null;
+}
+
+function findByText(roots, text, tagFilter) {
+  const want = text.trim().toLowerCase();
+  for (const root of roots) {
+    const candidates = root.querySelectorAll(tagFilter || "*");
+    for (const el of candidates) {
+      // Skip elements with children that have their own text — we want the
+      // leaf with the exact label.
+      if (el.children.length > 0 && el.textContent.trim().toLowerCase() !== want) continue;
+      if (el.textContent.trim().toLowerCase() === want) return el;
+    }
+  }
+  return null;
+}
+
+function dispatchClick(el) {
+  const opts = { bubbles: true, cancelable: true, composed: true, view: window, button: 0 };
+  try { el.dispatchEvent(new PointerEvent("pointerdown", opts)); } catch (_) {}
+  el.dispatchEvent(new MouseEvent("mousedown", opts));
+  try { el.dispatchEvent(new PointerEvent("pointerup", opts)); } catch (_) {}
+  el.dispatchEvent(new MouseEvent("mouseup", opts));
+  el.dispatchEvent(new MouseEvent("click", opts));
+}
+
+// Call React's onClick handler directly via the inject-script bridge.
+// Use when dispatchClick doesn't trigger Slack's React handler (e.g. for
+// elements where React attaches onClick to a <div>, not a native control).
+function reactClick(el) {
+  const marker = "omarchy-" + Math.random().toString(36).slice(2);
+  el.setAttribute("data-omarchy-target", marker);
+  document.dispatchEvent(
+    new CustomEvent("omarchy:react-click", { detail: { marker } })
+  );
+  setTimeout(() => el.removeAttribute("data-omarchy-target"), 200);
+}
+
+function pressKey(opts) {
+  const targets = [document, document.body, document.documentElement, window];
+  for (const t of targets) {
+    try { t.dispatchEvent(new KeyboardEvent("keydown", { ...opts, bubbles: true, cancelable: true })); } catch (_) {}
+  }
+  for (const t of targets) {
+    try { t.dispatchEvent(new KeyboardEvent("keyup", { ...opts, bubbles: true, cancelable: true })); } catch (_) {}
+  }
+}
+
+function installHideStyle() {
+  if (document.getElementById(AUTOMATION_HIDE_ID)) return;
+  const s = document.createElement("style");
+  s.id = AUTOMATION_HIDE_ID;
+  // visibility only — pointer-events:none would block synthetic clicks reaching buttons.
+  s.textContent = `
+    [role="dialog"],
+    [class*="ReactModal__Overlay"],
+    [class*="c-modal"],
+    [class*="modal_overlay"],
+    [class*="dialog_overlay"] {
+      visibility: hidden !important;
+    }
+  `;
+  (document.head || document.documentElement).appendChild(s);
+}
+
+function removeHideStyle() {
+  const s = document.getElementById(AUTOMATION_HIDE_ID);
+  if (s) s.remove();
+}
+
+function findPrefsDialog() {
+  return (
+    document.querySelector('[role="dialog"][aria-label="Preferences"]') ||
+    document.querySelector('.p-prefs_dialog, [class*="p-prefs_dialog"]')
+  );
+}
+
+function logDialogDetails(prefix) {
+  const dialogs = document.querySelectorAll('[role="dialog"]');
+  console.warn(prefix, "dialogs on page:", dialogs.length);
+  dialogs.forEach((d, i) => {
+    console.warn(
+      `  [${i}]`,
+      "aria-label=", JSON.stringify(d.getAttribute("aria-label")),
+      "class=", (d.className || "").toString().slice(0, 100),
+      "text=", JSON.stringify((d.innerText || "").slice(0, 150))
+    );
+  });
+  const iframes = document.querySelectorAll("iframe");
+  if (iframes.length) console.warn("[omarchy] iframes on page:", iframes.length);
+}
+
+async function openPreferencesDialog() {
+  // Try keyboard once (cheap), then go straight to the menu path. Synthetic
+  // Ctrl+, doesn't seem to land in Brave on Linux, so don't burn 15s retrying.
+  console.log("[omarchy] opening preferences (Ctrl+,)");
+  pressKey({ key: ",", code: "Comma", keyCode: 188, which: 188, ctrlKey: true });
+  const kbModal = await waitFor(() => findPrefsDialog(), 1200);
+  if (kbModal) {
+    console.log("[omarchy] preferences opened via keyboard");
+    return kbModal;
+  }
+
+  console.log("[omarchy] using workspace-actions menu");
+  // Exact selector confirmed via DOM inspection: the "Pay Ready Actions"
+  // button at the top of the channel sidebar.
+  const wsBtn = await waitFor(
+    () =>
+      document.querySelector('[data-qa="workspace_actions_button"]') ||
+      document.querySelector('[data-qa*="workspace_actions"]') ||
+      document.querySelector('button[aria-label$=" Actions"]'),
+    3000
+  );
+
+  if (!wsBtn) {
+    console.warn("[omarchy] workspace-name menu button not found");
+    return null;
+  }
+  console.log("[omarchy] clicking workspace-name button:", wsBtn.outerHTML.slice(0, 120));
+  dispatchClick(wsBtn);
+
+  // Wait for Slack's menu container to mount — it has data-qa="menu_items".
+  const menu = await waitFor(
+    () =>
+      document.querySelector('[role="menu"][data-qa="menu_items"]') ||
+      document.querySelector('.c-menu__items'),
+    2500
+  );
+  if (!menu) {
+    console.warn("[omarchy] workspace actions menu did not open");
+    return null;
+  }
+
+  // Find the "Preferences" menu item inside that menu.
+  const prefsItem = await waitFor(() => {
+    const items = menu.querySelectorAll(
+      '[role="menuitem"], button, [data-qa="menu_item_button"]'
+    );
+    for (const el of items) {
+      if ((el.innerText || el.textContent || "").trim() === "Preferences") {
+        return el;
+      }
+    }
+    return null;
+  }, 2000);
+
+  if (!prefsItem) {
+    console.warn("[omarchy] 'Preferences' menu item not found; closing menu");
+    pressKey({ key: "Escape", code: "Escape", keyCode: 27, which: 27 });
+    return null;
+  }
+
+  console.log("[omarchy] activating Preferences menu item:", prefsItem.outerHTML.slice(0, 140));
+
+  // Try several activation strategies in sequence — Slack's menu items may
+  // respond to keyboard Enter rather than a synthetic click.
+  prefsItem.focus();
+  dispatchClick(prefsItem);
+
+  modal = await waitFor(() => findPrefsDialog(), 1500);
+  if (!modal) {
+    console.log("[omarchy] dispatchClick didn't open prefs; trying native click()");
+    try { prefsItem.click(); } catch (_) {}
+    modal = await waitFor(() => findPrefsDialog(), 1500);
+  }
+  if (!modal) {
+    console.log("[omarchy] native click() didn't open prefs; trying Enter key");
+    prefsItem.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    prefsItem.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    modal = await waitFor(() => findPrefsDialog(), 2000);
+  }
+
+  console.log("[omarchy] preferences dialog opened via menu:", !!modal);
+  if (!modal) {
+    pressKey({ key: "Escape", code: "Escape", keyCode: 27, which: 27 });
+  }
+  return modal;
+}
+
+function isRendered(el) {
+  // Note: we deliberately don't check visibility:hidden because our own
+  // hide-style sets that on dialogs during automation.
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return false;
+  if (getComputedStyle(el).display === "none") return false;
+  return true;
+}
+
+function findElementByExactText(text) {
+  // Search the entire document — Slack often portals modal content outside
+  // [role="dialog"], so scoped queries miss everything.
+  const lower = text.toLowerCase();
+  const all = document.querySelectorAll(
+    'button, a, [role="tab"], [role="menuitem"], [role="option"], [role="radio"], [role="button"], li, label, span, div'
+  );
+  let best = null;
+  let bestScore = 0;
+  for (const el of all) {
+    const t = (el.innerText || el.textContent || "").trim();
+    if (!t) continue;
+    if (t.length > 60) continue;
+    const tl = t.toLowerCase();
+    if (tl !== lower && !tl.endsWith(lower)) continue;
+    if (!isRendered(el)) continue;
+    const score = tl === lower ? 100 : 70;
+    if (score > bestScore) {
+      best = el;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function findAppearanceTab() {
+  const tabs = document.querySelectorAll(
+    '.p-prefs_dialog__menu [role="tab"], [data-qa="tabs_full_width_class"] [role="tab"], [aria-label="Preferences"] [role="tab"]'
+  );
+  for (const t of tabs) {
+    if ((t.innerText || t.textContent || "").trim() === "Appearance") return t;
+  }
+  return null;
+}
+
+async function clickAppearanceTab(_modal) {
+  const tab = await waitFor(findAppearanceTab, 5000);
+  if (!tab) {
+    logDialogDetails("[omarchy] Appearance tab not found.");
+    return false;
+  }
+  console.log("[omarchy] clicking Appearance tab");
+  dispatchClick(tab);
+
+  // Verify the tab actually activated — its class should include
+  // c-tabs__tab--active when selected.
+  const activated = await waitFor(() => {
+    const t = findAppearanceTab();
+    return t && /tab--active/.test((t.className || "").toString());
+  }, 600);
+
+  if (!activated) {
+    console.log("[omarchy] dispatchClick didn't activate Appearance; using React handler");
+    reactClick(tab);
+    await sleep(200);
+  }
+  return true;
+}
+
+function findColorModeRadio(target) {
+  // Anchor on the actual color-mode radio inputs — Slack uses class
+  // `themeRadio__...` (CSS module hashed) on the hidden <input>. The visible
+  // label is in the wrapper DIV.
+  const inputs = document.querySelectorAll('input[type="radio"][class*="themeRadio"]');
+  for (const input of inputs) {
+    const wrapper = input.closest('[class*="boxContainer"]');
+    if (!wrapper) continue;
+    if ((wrapper.innerText || wrapper.textContent || "").trim() === target) {
+      return wrapper;
+    }
+  }
+  return null;
+}
+
+function isRadioSelected(wrapperEl) {
+  // Source of truth: the <input>'s .checked property. The wrapper's
+  // `boxContainerSelected` class can lag behind during state loading.
+  if (!wrapperEl) return false;
+  const input = wrapperEl.querySelector('input[type="radio"][class*="themeRadio"]');
+  return !!(input && input.checked);
+}
+
+async function clickColorModeButton(_modal, target) {
+  // Wait for BOTH radios to be present — guards against checking state
+  // before Slack has hydrated the Appearance pane.
+  await waitFor(
+    () => findColorModeRadio("Light") && findColorModeRadio("Dark"),
+    3000
+  );
+
+  const btn = findColorModeRadio(target);
+  if (!btn) {
+    console.warn(`[omarchy] ${target} radio not found`);
+    return false;
+  }
+
+  if (isRadioSelected(btn)) {
+    console.log(`[omarchy] ${target} already selected`);
+    return true;
+  }
+
+  console.log(`[omarchy] clicking ${target} radio`);
+  dispatchClick(btn);
+
+  const verified = await waitFor(() => isRadioSelected(findColorModeRadio(target)), 800);
+  if (verified) return true;
+
+  console.log(`[omarchy] dispatchClick didn't take; using React handler for ${target}`);
+  reactClick(btn);
+
+  const reverified = await waitFor(
+    () => isRadioSelected(findColorModeRadio(target)),
+    1500
+  );
+  if (reverified) {
+    console.log(`[omarchy] React click confirmed ${target}`);
+    return true;
+  }
+
+  console.warn(`[omarchy] ${target} click did NOT register — Slack UI unchanged`);
+  return false;
+}
+
+async function closeDialog() {
+  // Try Escape first
+  pressKey({ key: "Escape", code: "Escape", keyCode: 27, which: 27 });
+  if (await waitFor(() => !findPrefsDialog(), 800)) return;
+
+  // Escape didn't close it (likely a trusted-event issue) — click the X.
+  const closeBtn =
+    document.querySelector(
+      '[aria-label="Preferences"] [aria-label*="Close" i]'
+    ) ||
+    document.querySelector(
+      '[aria-label="Preferences"] [data-qa*="close"]'
+    ) ||
+    document.querySelector(
+      '.p-prefs_dialog [aria-label*="Close" i], .p-prefs_dialog [data-qa*="close"]'
+    ) ||
+    document.querySelector(
+      '.p-prefs_dialog button[aria-label="Close"], .p-prefs_dialog__close'
+    );
+
+  if (closeBtn) {
+    console.log("[omarchy] closing prefs via close button");
+    dispatchClick(closeBtn);
+    try { closeBtn.click(); } catch (_) {}
+    if (await waitFor(() => !findPrefsDialog(), 1500)) return;
+  }
+
+  console.warn("[omarchy] could not close preferences dialog");
+}
+
+async function ensureSlackColorMode(targetIsDark) {
+  const target = targetIsDark ? "Dark" : "Light";
+
+  // Synchronous claim — set BEFORE any await so concurrent callers see it.
+  if (automating) return;
+  automating = true;
+
+  // No cache check. The "Dark already selected" / "Light already selected"
+  // detection inside clickColorModeButton (via `boxContainerSelected` class)
+  // is the real source of truth — checking it requires opening prefs, but
+  // that's cheap and avoids us getting out of sync with Slack.
+
+  try {
+
+    // Wait for Slack to be FULLY interactive — message composer + a real channel
+    // row in the sidebar. Cheap placeholders like `[class*="p-ia"]` appear long
+    // before Slack's keyboard handlers are attached.
+    const ready = await waitFor(
+      () => {
+        const hasComposer = !!document.querySelector(
+          '[data-qa="message_input"], [class*="p-message_input"], [data-message-input], [contenteditable="true"][data-qa*="message"]'
+        );
+        const hasChannelRow = !!document.querySelector(
+          '[class*="channel_sidebar__channel"], [class*="p-channel_sidebar__channel"], [data-qa="channel_sidebar_name_"]'
+        );
+        return hasComposer || hasChannelRow;
+      },
+      60000
+    );
+    if (!ready) {
+      console.warn("[omarchy] Slack UI never finished loading; skipping");
+      return;
+    }
+    // One more beat after Slack mounts — handlers attach slightly after DOM appears.
+    await sleep(500);
+
+    console.log("[omarchy] flipping Slack to", target);
+    installHideStyle();
+    try {
+      const modal = await openPreferencesDialog();
+      if (!modal) {
+        console.warn("[omarchy] could not open Preferences dialog");
+        return;
+      }
+      if (!(await clickAppearanceTab(modal))) {
+        console.warn("[omarchy] could not click Appearance tab");
+        return;
+      }
+      await sleep(200);
+      if (!(await clickColorModeButton(modal, target))) {
+        console.warn("[omarchy] could not click", target, "button");
+        return;
+      }
+      await sleep(150);
+      await closeDialog();
+
+      lastAppliedMode = target;
+      chrome.storage.local.set({ lastSlackMode: target });
+      console.log("[omarchy] Slack color mode now", target);
+    } finally {
+      setTimeout(removeHideStyle, 300);
+    }
+  } finally {
+    // Close any leftover workspace menu — Slack's "close menu on item click"
+    // handler doesn't fire reliably for synthetic clicks, so it stays open
+    // after we click "Preferences".
+    for (let i = 0; i < 4; i++) {
+      const lingering = document.querySelector('[role="menu"][data-qa="menu_items"]');
+      if (!lingering) break;
+      pressKey({ key: "Escape", code: "Escape", keyCode: 27, which: 27 });
+      await sleep(150);
+    }
+
+    // Hold the lock for a beat after we finish so any in-flight applyTheme
+    // calls don't stack a fresh attempt.
+    setTimeout(() => {
+      automating = false;
+    }, 500);
+  }
+}
