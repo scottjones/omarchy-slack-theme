@@ -292,8 +292,15 @@ function applyTheme(theme) {
       background-color: var(--omarchy-hover-bg) !important;
     }
 
-    /* The floating message action toolbar (react/reply/forward) is now
-       handled by Slack's color mode — auto-flip keeps it correct. */
+    /* The floating message action toolbar (👍 ❤️ ✅ … New) and the emoji
+       reaction picker popover. Slack's default background for these is a
+       translucent token that goes see-through against our repainted message
+       pane — force opaque. Scoped to the action bar wrapper, NOT its inner
+       buttons (each emoji button needs to keep its own hover bg). */
+    html body [class*="c-message_actions__group"],
+    html body [class*="c-reaction_picker"] {
+      background-color: var(--omarchy-nav-bg) !important;
+    }
 
     /* ===== floating pills in the message stream — paint the inner label
             AND the button it contains, so the date pill always covers the
