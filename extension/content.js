@@ -6,6 +6,15 @@ let lastSeenIsDark = null;
 try { chrome.storage.local.remove("lastSlackMode"); } catch (_) {}
 
 function hexToRgb(hex) {
+  // Accept rgb(r, g, b) too — shade() emits that form, and we sometimes
+  // chain shade() output back through mix()/withAlpha().
+  if (typeof hex === "string" && hex.startsWith("rgb")) {
+    const m = hex.match(/\d+/g);
+    if (m && m.length >= 3) {
+      return { r: +m[0], g: +m[1], b: +m[2] };
+    }
+    return null;
+  }
   const h = (hex || "").replace("#", "");
   if (h.length < 6) return null;
   return {
@@ -32,6 +41,16 @@ function withAlpha(hex, alpha) {
   return `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
 }
 
+function mix(hexA, hexB, t) {
+  const a = hexToRgb(hexA);
+  const b = hexToRgb(hexB);
+  if (!a || !b) return hexA;
+  const r = Math.round(a.r * (1 - t) + b.r * t);
+  const g = Math.round(a.g * (1 - t) + b.g * t);
+  const bl = Math.round(a.b * (1 - t) + b.b * t);
+  return `rgb(${r}, ${g}, ${bl})`;
+}
+
 function applyTheme(theme) {
   if (!theme || !theme.bg) return;
   const bgRgb = hexToRgb(theme.bg);
@@ -48,10 +67,16 @@ function applyTheme(theme) {
 
   // delta direction: lighter shades on dark themes, darker shades on light themes
   const dir = isDark ? +1 : -1;
-  const sidebarBg = shade(theme.bg, dir * 0.04);
-  const navBg = shade(theme.bg, dir * 0.06);
-  const hoverBg = shade(theme.bg, dir * 0.08);
-  const borderColor = withAlpha(fg, 0.12);
+  // Sidebar + top nav take a small accent tint so they read as a distinct,
+  // themed region. Kept light — heavier mixes flood the chrome with the
+  // accent on themes with warm/saturated accents (e.g. orange-red, magenta),
+  // which overwhelms instead of branding. Combined with a directional shade
+  // so the region still reads as a different surface even when the accent is
+  // close to bg in luminance.
+  const sidebarBg = mix(shade(theme.bg, dir * 0.04), accent, isDark ? 0.10 : 0.06);
+  const navBg = sidebarBg;
+  const hoverBg = mix(theme.bg, accent, isDark ? 0.28 : 0.18);
+  const borderColor = withAlpha(fg, 0.08);
 
   document.documentElement.style.colorScheme = isDark ? "dark" : "light";
 
@@ -262,7 +287,9 @@ function applyTheme(theme) {
     /* ===== channel header tab bar ("Messages / Add canvas / Files / +")
             AND its right-side action strip — Slack puts these in different
             class fragments, so we cast a wide net. Excludes the prefs dialog's
-            tab menu, which uses the same c-tabs base class. ===== */
+            tab menu, which uses the same c-tabs base class. Borders made
+            transparent so the strip blends into the message pane instead of
+            reading as a separate boxed region. ===== */
     html body [class*="p-message_pane_header"],
     html body [class*="p-message_pane__tab"],
     html body [class*="p-tab_container"],
@@ -277,7 +304,7 @@ function applyTheme(theme) {
     html body [class*="c-tabs"]:not([class*="prefs"]):not([data-qa="tabs_full_width_class"]) {
       background-color: var(--omarchy-bg) !important;
       color: var(--omarchy-fg) !important;
-      border-color: var(--omarchy-border) !important;
+      border-color: transparent !important;
     }
 
     /* (Removed the aggressive "transparent" rule for view_header / message_pane_header
@@ -295,16 +322,19 @@ function applyTheme(theme) {
     /* The floating message action toolbar (👍 ❤️ ✅ … New) and the emoji
        reaction picker popover. Slack's default background for these is a
        translucent token that goes see-through against our repainted message
-       pane — force opaque. Scoped to the action bar wrapper, NOT its inner
-       buttons (each emoji button needs to keep its own hover bg). */
+       pane — force opaque. Uses a barely-off-bg shade so it reads as a subtle
+       floating bar rather than a solid contrasting box. */
     html body [class*="c-message_actions__group"],
     html body [class*="c-reaction_picker"] {
-      background-color: var(--omarchy-nav-bg) !important;
+      background-color: ${shade(theme.bg, dir * 0.05)} !important;
+      border: 1px solid var(--omarchy-border) !important;
     }
 
     /* ===== floating pills in the message stream — paint the inner label
             AND the button it contains, so the date pill always covers the
-            horizontal line and any message text behind it. ===== */
+            horizontal line and any message text behind it. Uses a neutral
+            shade (not the accent-tinted navBg) so the pill stays unobtrusive
+            in the message flow. ===== */
     html body [class*="day_divider"] [class*="label"],
     html body [class*="day_divider"] button,
     html body [class*="day_divider__label"],
@@ -315,14 +345,28 @@ function applyTheme(theme) {
     html body [class*="new_messages_pill"],
     html body [class*="unread_divider"] [class*="label"],
     html body [class*="unread_divider"] button {
-      background-color: var(--omarchy-nav-bg) !important;
+      background-color: ${shade(theme.bg, dir * 0.05)} !important;
       color: var(--omarchy-fg) !important;
     }
 
-    /* ===== message composer / input area ===== */
+    /* ===== message composer / input area =====
+       Outer wrappers blend with the message pane (same bg, no border) so the
+       composer doesn't read as a separate filled rectangle. The inner editable
+       area gets a soft tint + thin outline — that's the "input field" the user
+       interacts with, matching Slack's default rounded-rectangle treatment. */
     html body [class*="p-message_pane_input"],
     html body [class*="p-workspace__input"],
+    html body [class*="p-composer"],
+    html body [class*="c-wysiwyg_container"],
+    html body [class*="p-rich_text_input"],
+    html body [class*="p-message_input_field"] {
+      background-color: var(--omarchy-bg) !important;
+      color: var(--omarchy-fg) !important;
+      border-color: transparent !important;
+    }
+
     html body [class*="p-message_input"],
+    html body [class*="p-message_input__primary_container"],
     html body [class*="c-texty_input"],
     html body [class*="ql-toolbar"],
     html body [class*="ql-container"],
@@ -331,19 +375,9 @@ function applyTheme(theme) {
     html body [data-qa="message_input"],
     html body [contenteditable="true"][data-qa*="message"],
     html body [contenteditable="true"][aria-label*="message" i] {
-      background-color: var(--omarchy-nav-bg) !important;
+      background-color: ${shade(theme.bg, dir * 0.04)} !important;
       color: var(--omarchy-fg) !important;
       border-color: var(--omarchy-border) !important;
-    }
-
-    /* the composer outer container / formatting toolbar row */
-    html body [class*="p-composer"],
-    html body [class*="c-wysiwyg_container"],
-    html body [class*="p-rich_text_input"],
-    html body [class*="p-message_input_field"],
-    html body [class*="p-message_input__primary_container"] {
-      background-color: var(--omarchy-nav-bg) !important;
-      color: var(--omarchy-fg) !important;
     }
 
     /* placeholder text */
