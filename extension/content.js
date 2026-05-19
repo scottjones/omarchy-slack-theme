@@ -1,5 +1,6 @@
 const STYLE_ID = "omarchy-slack-style";
 let lastAppliedThemeKey = null;
+let lastAppliedTheme = null;
 let lastSeenIsDark = null;
 
 // Clear any stale cached mode from earlier extension versions.
@@ -60,6 +61,7 @@ function applyTheme(theme) {
   const key = JSON.stringify(theme);
   if (key === lastAppliedThemeKey) return;
   lastAppliedThemeKey = key;
+  lastAppliedTheme = theme;
 
   const isDark = relLuminance(bgRgb) < 0.5;
   const fg = theme.fg || (isDark ? "#e6e6e6" : "#1f1f1f");
@@ -67,15 +69,22 @@ function applyTheme(theme) {
 
   // delta direction: lighter shades on dark themes, darker shades on light themes
   const dir = isDark ? +1 : -1;
-  // Sidebar + top nav take a small accent tint so they read as a distinct,
-  // themed region. Kept light — heavier mixes flood the chrome with the
-  // accent on themes with warm/saturated accents (e.g. orange-red, magenta),
-  // which overwhelms instead of branding. Combined with a directional shade
-  // so the region still reads as a different surface even when the accent is
-  // close to bg in luminance.
+  // Two surfaces:
+  //  - sidebarBg: the channel list. Subtly accent-tinted so the workspace
+  //    feels theme-aware. Kept light — heavier mixes flood the chrome on
+  //    warm/saturated accents.
+  //  - chromeBg: outer-app chrome (tab rail + top nav). Uses omarchy's
+  //    chromium.theme when the theme ships one, so Slack matches Brave's
+  //    toolbar tint. Falls back to sidebarBg when absent — keeps fg
+  //    contrast correct on light themes.
   const sidebarBg = mix(shade(theme.bg, dir * 0.04), accent, isDark ? 0.10 : 0.06);
-  const navBg = sidebarBg;
-  const hoverBg = mix(theme.bg, accent, isDark ? 0.28 : 0.18);
+  const chromeBg = theme.chrome || sidebarBg;
+  const railBg = chromeBg;
+  const navBg = chromeBg;
+  const sidebarFg = fg;
+  const sidebarMuted = withAlpha(fg, 0.65);
+  const hoverBg = withAlpha(accent, 0.20);
+  const selectedBg = withAlpha(accent, 0.35);
   const borderColor = withAlpha(fg, 0.08);
 
   document.documentElement.style.colorScheme = isDark ? "dark" : "light";
@@ -123,22 +132,25 @@ function applyTheme(theme) {
       --omarchy-bg: ${theme.bg};
       --omarchy-fg: ${fg};
       --omarchy-accent: ${accent};
+      --omarchy-rail-bg: ${railBg};
       --omarchy-sidebar-bg: ${sidebarBg};
+      --omarchy-sidebar-fg: ${sidebarFg};
       --omarchy-nav-bg: ${navBg};
       --omarchy-hover-bg: ${hoverBg};
+      --omarchy-selected-bg: ${selectedBg};
       --omarchy-border: ${borderColor};
 
       /* Slack's "rainbow" sidebar theme tokens — these actually drive the
          channel sidebar paint job in current Slack web. */
       --rainbow-canvas: ${sidebarBg} !important;
-      --rainbow-canvas-2: ${navBg} !important;
-      --rainbow-text: ${fg} !important;
-      --rainbow-action: ${fg} !important;
+      --rainbow-canvas-2: ${railBg} !important;
+      --rainbow-text: ${sidebarFg} !important;
+      --rainbow-action: ${sidebarFg} !important;
       --rainbow-action-hover: ${hoverBg} !important;
-      --rainbow-action-active: ${withAlpha(accent, 0.25)} !important;
-      --rainbow-action-active-text: ${fg} !important;
+      --rainbow-action-active: ${selectedBg} !important;
+      --rainbow-action-active-text: ${sidebarFg} !important;
       --rainbow-mention-badge: ${accent} !important;
-      --rainbow-mention-text: ${theme.bg} !important;
+      --rainbow-mention-text: ${railBg} !important;
 
       /* SK / SAF design tokens */
       --sk_primary_background: ${theme.bg} !important;
@@ -149,19 +161,19 @@ function applyTheme(theme) {
       --sk_highlight: ${accent} !important;
       --saf-0: ${theme.bg} !important;
       --saf-1: ${sidebarBg} !important;
-      --saf-2: ${navBg} !important;
+      --saf-2: ${railBg} !important;
       --saf-100: ${sidebarBg} !important;
 
       /* Legacy sidebar tuple */
       --sidebar-background: ${sidebarBg} !important;
-      --sidebar-text: ${fg} !important;
-      --sidebar-text-hover: ${fg} !important;
-      --sidebar-text-active: ${fg} !important;
-      --sidebar-text-active-bg: ${hoverBg} !important;
+      --sidebar-text: ${sidebarFg} !important;
+      --sidebar-text-hover: ${sidebarFg} !important;
+      --sidebar-text-active: ${sidebarFg} !important;
+      --sidebar-text-active-bg: ${selectedBg} !important;
       --sidebar-mention-badge: ${accent} !important;
       --sidebar-unread-count-bg: ${accent} !important;
-      --sidebar-channel-text: ${fg} !important;
-      --sidebar-channel-icon: ${withAlpha(fg, 0.6)} !important;
+      --sidebar-channel-text: ${sidebarFg} !important;
+      --sidebar-channel-icon: ${sidebarMuted} !important;
       --sidebar-presence-online: ${accent} !important;
     }
 
@@ -237,19 +249,67 @@ function applyTheme(theme) {
       background-color: var(--omarchy-bg) !important;
     }
 
-    /* hovered + selected channel rows */
-    html body [class*="channel_sidebar__channel"]:hover,
-    html body [class*="sidebar_link"]:hover,
-    html body [class*="p-channel_sidebar__channel--hover"] {
-      background-color: var(--omarchy-hover-bg) !important;
+    /* Make every container inside the channel sidebar transparent so the
+       sidebar's solid bg color shows edge-to-edge top to bottom. Section
+       containers (Unreads/Threads/…, Starred, DMs, Channels), per-item
+       links, section headings, and virtual list wrappers all get
+       transparent bg by default. The :not() chain skips any row in an
+       interactive state — hover, --selected, --active, aria-selected,
+       aria-current — so the pill rule below can paint over those. */
+    html body [class*="channel_sidebar"] section,
+    html body [class*="channel_sidebar"] [class*="section"]:not([class*="section_heading_text"]),
+    html body [class*="channel_sidebar"] [class*="static_list"],
+    html body [class*="channel_sidebar"] [class*="virtual_list"],
+    html body [class*="channel_sidebar"] [class*="sidebar_link"]:not(:hover):not([class*="--selected"]):not([class*="--active"]):not([aria-selected="true"]):not([aria-current="true"]):not([aria-current="page"]),
+    html body [class*="channel_sidebar"] [class*="c-link"]:not(:hover):not([class*="--selected"]):not([class*="--active"]):not([aria-selected="true"]):not([aria-current="true"]):not([aria-current="page"]),
+    html body [class*="channel_sidebar"] [class*="channel_sidebar__channel"]:not(:hover):not([class*="--selected"]):not([class*="--active"]):not([aria-selected="true"]):not([aria-current="true"]),
+    html body [class*="channel_sidebar"] [class*="static_list__item"]:not(:hover):not([class*="--selected"]):not([class*="--active"]):not([aria-selected="true"]):not([aria-current="true"]),
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__static_list_item"]:not(:hover):not([class*="--selected"]):not([class*="--active"]):not([aria-selected="true"]):not([aria-current="true"]),
+    html body [class*="channel_sidebar"] [class*="section_heading"],
+    html body [class*="channel_sidebar"] [class*="channel_sidebar__section_heading"],
+    html body [class*="channel_sidebar"] ul,
+    html body [class*="channel_sidebar"] li:not(:hover):not([class*="--selected"]):not([class*="--active"]):not([aria-selected="true"]):not([aria-current="true"]) {
+      background-color: transparent !important;
     }
+
+    /* Slack also paints some of these via CSS variables — nullify the
+       backgrounds those resolve to so the sidebar bg shows through even
+       on rules we haven't enumerated. */
+    html body [class*="channel_sidebar"] {
+      --c-link__bg: transparent !important;
+      --p-channel_sidebar__static_list__background: transparent !important;
+      --p-channel_sidebar__static_list__item__background: transparent !important;
+      --p-channel_sidebar__section_heading__background: transparent !important;
+    }
+
+    /* hovered + selected channel rows — rounded pill highlight inset from
+       the sidebar edges, so the active row reads as a distinct pill rather
+       than a full-width bar. The selected ruleset broadens what counts as
+       "selected" to cover Slack's variants: --selected, --active,
+       aria-selected, aria-current — so DMs in Starred and any other row
+       type still get the pill. */
+    html body [class*="channel_sidebar"] [class*="channel_sidebar__channel"]:hover,
+    html body [class*="channel_sidebar"] [class*="sidebar_link"]:hover,
+    html body [class*="channel_sidebar"] [class*="c-link"]:hover,
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__channel--hover"] {
+      background-color: var(--omarchy-hover-bg) !important;
+      border-radius: 8px !important;
+      margin: 0 8px !important;
+    }
+    /* Background + border-radius for the selected pill are painted inline by
+       paintActiveRows() — only on the innermost selected element — so the
+       row wrapper and its inner button don't stack two pills. CSS here just
+       strips Slack's default outline / box-shadow / border on selected rows
+       and forces our text color. */
+    html body [class*="channel_sidebar"] [class*="--selected"],
+    html body [class*="channel_sidebar"] [class*="--active"],
+    html body [class*="channel_sidebar"] [aria-selected="true"],
+    html body [class*="channel_sidebar"] [aria-current="true"],
+    html body [class*="channel_sidebar"] [aria-current="page"],
     html body [class*="channel_sidebar__channel--selected"],
     html body [class*="sidebar_link--selected"],
     html body [class*="p-channel_sidebar__channel--selected"],
-    html body [aria-selected="true"][class*="sidebar"],
-    html body [aria-current="true"][class*="sidebar"],
     html body [class*="virtual_list__item--selected"] {
-      background-color: ${withAlpha(accent, 0.35)} !important;
       color: var(--omarchy-fg) !important;
       outline: none !important;
       box-shadow: none !important;
@@ -386,6 +446,29 @@ function applyTheme(theme) {
       color: ${withAlpha(fg, 0.5)} !important;
     }
 
+    /* ===== unread / notification badges =====
+       Tab rail badges (the "14" on Activity, "16" on Later) and sidebar
+       unread/mention badges. Slack ships them in a muted/translucent token
+       by default — force the theme accent so they pop and stay branded
+       with the omarchy theme color. Text inside the pill uses the theme bg
+       so it contrasts with the saturated accent. */
+    html body [class*="tab_rail"] [class*="badge"],
+    html body [class*="tab_rail"] [class*="pill"],
+    html body [class*="tab_rail"] [class*="unread_count"],
+    html body [class*="tab_rail"] [class*="unread_indicator"],
+    html body [class*="tab_rail"] [class*="mention_badge"],
+    html body [class*="p-ia4_tab_rail"] [class*="badge"],
+    html body [class*="p-ia4_tab_rail"] [class*="unread"],
+    html body [class*="channel_sidebar"] [class*="mention_badge"],
+    html body [class*="channel_sidebar"] [class*="unread_count"],
+    html body [class*="channel_sidebar"] [class*="c-mention_badge"],
+    html body [class*="c-mention_badge"],
+    html body [class*="p-channel_sidebar__badge"] {
+      background-color: var(--omarchy-accent) !important;
+      color: var(--omarchy-bg) !important;
+      opacity: 1 !important;
+    }
+
     /* ===== text readability: force fg on anything inside our themed panels =====
        Slack's per-mode colors don't know we've repainted the bg, so labels go
        invisible on the opposite-luminance bg. Force them. */
@@ -449,11 +532,111 @@ function applyTheme(theme) {
     document.documentElement.style.setProperty(k, v, "important");
     if (document.body) document.body.style.setProperty(k, v, "important");
   }
+
+  // Write inline-important background-color directly on the tab rail,
+  // channel sidebar, and top-nav elements. Slack sets its own inline styles
+  // on these on blur (reverting to default aubergine), which beats our
+  // external !important CSS. Inline-important on the element itself wins
+  // back the cascade.
+  const directPaint = [
+    [
+      '[class*="tab_rail"], [class*="workspace_switcher"], [class*="nav_rail"], [class*="rail__nav"], [class*="p-ia4_tab_rail"], [class*="p-ia__nav"]',
+      chromeBg,
+    ],
+    [
+      '[class*="channel_sidebar"], [class*="p-channel_sidebar"], [class*="p-ia4_channel_sidebar"], [class*="left_nav"], [class*="sidebar_list"], [class*="p-ia__sidebar"], [class*="p-ia4__sidebar"], [class*="sidebar_layout"]',
+      sidebarBg,
+    ],
+    [
+      '[class*="top_nav"], [class*="p-ia4_top_nav"], [class*="p-ia__top_nav"], [class*="p-classic_nav"]',
+      chromeBg,
+    ],
+  ];
+  for (const [selector, color] of directPaint) {
+    for (const el of document.querySelectorAll(selector)) {
+      el.style.setProperty("background-color", color, "important");
+    }
+  }
+
+  // Selected-row pill. Slack's React re-renders the active row after the
+  // initial paint and stomps our --selected bg with an inline style — so we
+  // paint inline ourselves to win that race. The mutation observer below
+  // re-runs this on every relevant attribute change in the sidebar, so it
+  // keeps winning even after Slack re-renders.
+  paintActiveRows();
+}
+
+// Track elements we've painted so we can wipe their inline styles when the
+// selection moves elsewhere — otherwise the old pill lingers on the
+// previously-selected row after navigation.
+const paintedRowEls = new Set();
+const paintedDescendantEls = new Set();
+
+function paintActiveRows() {
+  // Always clear last paint first, even if no theme yet — keeps cleanup correct.
+  for (const el of paintedRowEls) {
+    el.style.removeProperty("background-color");
+    el.style.removeProperty("border-radius");
+  }
+  paintedRowEls.clear();
+  for (const el of paintedDescendantEls) {
+    el.style.removeProperty("background-color");
+  }
+  paintedDescendantEls.clear();
+
+  if (!lastAppliedTheme) return;
+  const theme = lastAppliedTheme;
+  const bgRgb = hexToRgb(theme.bg);
+  if (!bgRgb) return;
+  const isDark = relLuminance(bgRgb) < 0.5;
+  const accent = theme.accent || (isDark ? "#7aa2f7" : "#1264a3");
+  const pillBg = withAlpha(accent, 0.35);
+
+  const selector =
+    '[class*="channel_sidebar"] [class*="--selected"], ' +
+    '[class*="channel_sidebar"] [class*="--active"], ' +
+    '[class*="channel_sidebar"] [aria-selected="true"], ' +
+    '[class*="channel_sidebar"] [aria-current="true"], ' +
+    '[class*="channel_sidebar"] [aria-current="page"]';
+  const matches = Array.from(document.querySelectorAll(selector));
+  if (!matches.length) return;
+
+  // Pick innermost matches only — when a row's wrapper and its inner
+  // button are both marked selected, paint just the inner one. Otherwise
+  // we get a faded outer pill AND a darker inner pill stacked.
+  const innermost = matches.filter(
+    (el) => !matches.some((other) => other !== el && el.contains(other))
+  );
+
+  for (const el of innermost) {
+    el.style.setProperty("background-color", pillBg, "important");
+    el.style.setProperty("border-radius", "8px", "important");
+    paintedRowEls.add(el);
+
+    // Clear inline bg on descendants of the painted row so Slack's per-text
+    // background highlights don't show through the pill. Skip badge/mention
+    // pills — those need to keep their own accent fill.
+    for (const child of el.querySelectorAll("*")) {
+      if (child.matches('[class*="badge"], [class*="mention"], [class*="unread_count"], [class*="pill"]')) continue;
+      child.style.setProperty("background-color", "transparent", "important");
+      paintedDescendantEls.add(child);
+    }
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "omarchy-theme") applyTheme(msg.theme);
 });
+
+// Force-reapply the last theme, bypassing the de-dup check. Used when
+// something has clobbered our inline CSS variables — e.g. Slack reverting to
+// its default rainbow tokens when the window loses focus, or its React layer
+// stomping our inline style on body/html.
+function forceReapply() {
+  if (!lastAppliedTheme) return;
+  lastAppliedThemeKey = null;
+  applyTheme(lastAppliedTheme);
+}
 
 // Re-apply if Slack's SPA navigation tears down our <style> node.
 const observer = new MutationObserver(() => {
@@ -464,6 +647,39 @@ const observer = new MutationObserver(() => {
   }
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
+
+// Watch <html> and <body> inline-style attribute changes — if Slack rewrites
+// the style attribute (which it does on focus/blur) and drops our --rainbow-*
+// vars, re-apply immediately. Cheap check via the sentinel var.
+const SENTINEL_VAR = "--rainbow-canvas";
+const styleObserver = new MutationObserver(() => {
+  if (!lastAppliedTheme) return;
+  const present = document.documentElement.style.getPropertyValue(SENTINEL_VAR);
+  if (!present || !present.trim()) forceReapply();
+});
+styleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+if (document.body) {
+  styleObserver.observe(document.body, { attributes: true, attributeFilter: ["style"] });
+}
+
+// Re-paint the active-row pill whenever Slack mutates class / aria /
+// inline-style on sidebar rows. Coalesced via rAF so a burst of mutations
+// during a React re-render only triggers one paint.
+let activeRowsRaf = 0;
+function schedulePaintActiveRows() {
+  if (activeRowsRaf) return;
+  activeRowsRaf = requestAnimationFrame(() => {
+    activeRowsRaf = 0;
+    paintActiveRows();
+  });
+}
+const activeRowsObserver = new MutationObserver(schedulePaintActiveRows);
+activeRowsObserver.observe(document.body || document.documentElement, {
+  subtree: true,
+  attributes: true,
+  attributeFilter: ["class", "aria-selected", "aria-current", "style"],
+  childList: true,
+});
 
 chrome.runtime.sendMessage({ type: "request-theme" }, (theme) => {
   if (theme) applyTheme(theme);

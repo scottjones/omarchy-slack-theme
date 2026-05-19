@@ -59,12 +59,34 @@ def _parse_colors_toml(path: Path):
     return out
 
 
+def _parse_chromium_theme(path: Path):
+    """omarchy ships browser chrome color as 'r,g,b' decimal CSV in chromium.theme.
+    Most stock themes omit the file — omarchy-theme-set-browser then falls back
+    to #1c2027, but here we return None and let the extension apply its own
+    fallback so it can be theme-aware about the choice."""
+    try:
+        text = path.read_text().strip()
+    except OSError:
+        return None
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) != 3:
+        return None
+    try:
+        r, g, b = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if not all(0 <= c <= 255 for c in (r, g, b)):
+        return None
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def get_state():
     name = _read_text(OMARCHY / "theme.name")
     day = _read_text(OMARCHY / "theme.day")
     night = _read_text(OMARCHY / "theme.night")
     bg = _parse_alacritty_bg(OMARCHY / "theme" / "alacritty.toml")
     colors = _parse_colors_toml(OMARCHY / "theme" / "colors.toml")
+    chrome = _parse_chromium_theme(OMARCHY / "theme" / "chromium.theme")
     if not bg:
         bg = colors.get("background")
     if not bg:
@@ -78,13 +100,17 @@ def get_state():
         "fg": colors.get("foreground"),
         "accent": colors.get("accent"),
         "selection_bg": colors.get("selection_background"),
+        # Browser chrome color from chromium.theme — used by Slack extension for
+        # the tab rail + top nav so those regions match Brave's toolbar tint.
+        # None when the theme doesn't ship chromium.theme.
+        "chrome": chrome,
     }
 
 
 def signature():
     """Cheap fingerprint of theme state — bumps whenever the active theme changes."""
     parts = []
-    for sub in ("theme.name", "theme/alacritty.toml", "theme/colors.toml"):
+    for sub in ("theme.name", "theme/alacritty.toml", "theme/colors.toml", "theme/chromium.theme"):
         p = OMARCHY / sub
         try:
             parts.append(int(p.stat().st_mtime_ns))
