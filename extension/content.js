@@ -83,6 +83,9 @@ function applyTheme(theme) {
   const navBg = chromeBg;
   const sidebarFg = fg;
   const sidebarMuted = withAlpha(fg, 0.65);
+  // Stronger than fg: push toward white on dark themes / black on light themes.
+  // Used for unread channel rows so they read brighter than read rows.
+  const fgStrong = shade(fg, dir * 0.125);
   const hoverBg = withAlpha(accent, 0.20);
   const selectedBg = withAlpha(accent, 0.35);
   const borderColor = withAlpha(fg, 0.08);
@@ -131,6 +134,7 @@ function applyTheme(theme) {
     :root, html, body {
       --omarchy-bg: ${theme.bg};
       --omarchy-fg: ${fg};
+      --omarchy-fg-strong: ${fgStrong};
       --omarchy-accent: ${accent};
       --omarchy-rail-bg: ${railBg};
       --omarchy-sidebar-bg: ${sidebarBg};
@@ -498,17 +502,20 @@ function applyTheme(theme) {
       fill: currentColor;
     }
 
-    /* ===== unread channel rows: tint the name text with the accent =====
-       Slack already bolds unread rows; we additionally color them. The
-       --unread modifier sits on the row container (p-channel_sidebar__channel
-       --unread or p-channel_sidebar__link--unread for the top-level Unreads
-       item), and the bolded label sits in a descendant with class
+    /* ===== unread channel rows: push the name color past --omarchy-fg
+       toward white (dark themes) or black (light themes) =====
+       Slack already bolds unread rows; we additionally bump the color to
+       --omarchy-fg-strong so unread reads as more prominent than read rows
+       (which land on Slack's per-mode muted token or our fg). The --unread
+       modifier sits on the row container (p-channel_sidebar__channel--unread
+       or p-channel_sidebar__link--unread for the top-level Unreads item),
+       and the bolded label sits in a descendant with class
        p-channel_sidebar__name. The "__name *" arm catches unclassed inner
        spans so the broad "[class*=channel_sidebar] span" force-fg rule above
        doesn't win on them via inheritance. */
     html body [class*="channel_sidebar"] [class*="--unread"] [class*="__name"],
     html body [class*="channel_sidebar"] [class*="--unread"] [class*="__name"] * {
-      color: var(--omarchy-accent) !important;
+      color: var(--omarchy-fg-strong) !important;
     }
   `;
 
