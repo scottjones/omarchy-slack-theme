@@ -497,6 +497,19 @@ function applyTheme(theme) {
       color: var(--omarchy-fg) !important;
       fill: currentColor;
     }
+
+    /* ===== unread channel rows: tint the name text with the accent =====
+       Slack already bolds unread rows; we additionally color them. The
+       --unread modifier sits on the row container (p-channel_sidebar__channel
+       --unread or p-channel_sidebar__link--unread for the top-level Unreads
+       item), and the bolded label sits in a descendant with class
+       p-channel_sidebar__name. The "__name *" arm catches unclassed inner
+       spans so the broad "[class*=channel_sidebar] span" force-fg rule above
+       doesn't win on them via inheritance. */
+    html body [class*="channel_sidebar"] [class*="--unread"] [class*="__name"],
+    html body [class*="channel_sidebar"] [class*="--unread"] [class*="__name"] * {
+      color: var(--omarchy-accent) !important;
+    }
   `;
 
   let style = document.getElementById(STYLE_ID);

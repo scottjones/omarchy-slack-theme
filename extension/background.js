@@ -7,6 +7,7 @@ let reconnectTimer = null;
 function connect() {
   try {
     port = chrome.runtime.connectNative(HOST);
+    console.log("[omarchy] native port connected");
   } catch (e) {
     console.warn("[omarchy] connectNative threw:", e);
     scheduleReconnect();
@@ -18,13 +19,14 @@ function connect() {
       console.warn("[omarchy] native host error:", theme && theme.error);
       return;
     }
+    console.log("[omarchy] theme pushed by native host:", theme.theme_name, theme.bg);
     chrome.storage.local.set({ theme });
     broadcast(theme);
   });
 
   port.onDisconnect.addListener(() => {
     const err = chrome.runtime.lastError;
-    if (err) console.warn("[omarchy] native host disconnected:", err.message);
+    console.warn("[omarchy] native host disconnected:", err && err.message);
     port = null;
     scheduleReconnect();
   });
@@ -47,6 +49,7 @@ function scheduleReconnect() {
 
 function broadcast(theme) {
   chrome.tabs.query({ url: SLACK_URL_PATTERNS }, (tabs) => {
+    console.log("[omarchy] broadcasting theme to", tabs.length, "slack tab(s)");
     for (const t of tabs) {
       chrome.tabs.sendMessage(t.id, { type: "omarchy-theme", theme }).catch(() => {});
     }
