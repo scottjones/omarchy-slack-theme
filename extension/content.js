@@ -192,6 +192,9 @@ function applyTheme(theme) {
     html body [class*="primary_view_body"],
     html body [class*="primary_view_contents"],
     html body [class*="view_contents"],
+    html body [class*="tabbed_channel"],
+    html body [class*="channel_tab_panel"],
+    html body [class*="p-message_pane"],
     html body [class*="message_pane"],
     html body [class*="p-threads_view"],
     html body [class*="channel_info_pane"],
@@ -287,41 +290,42 @@ function applyTheme(theme) {
     }
 
     /* hovered + selected channel rows — rounded pill highlight inset from
-       the sidebar edges, so the active row reads as a distinct pill rather
-       than a full-width bar. The selected ruleset broadens what counts as
-       "selected" to cover Slack's variants: --selected, --active,
-       aria-selected, aria-current — so DMs in Starred and any other row
-       type still get the pill. */
-    html body [class*="channel_sidebar"] [class*="channel_sidebar__channel"]:hover,
-    html body [class*="channel_sidebar"] [class*="sidebar_link"]:hover,
-    html body [class*="channel_sidebar"] [class*="c-link"]:hover,
-    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__channel--hover"] {
+       the sidebar edges. Anchored on the two row-container classes Slack
+       actually uses (p-channel_sidebar__channel for chats/DMs,
+       p-channel_sidebar__link for top-level nav like Unreads/Huddles).
+       We deliberately do NOT include c-link or generic sidebar_link in this
+       rule — those are inner wrappers that also get :hover via bubbling, and
+       painting them too stacks a second mis-aligned pill on top. */
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__channel"]:hover,
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__link"]:hover {
       background-color: var(--omarchy-hover-bg) !important;
       border-radius: 8px !important;
       margin: 0 8px !important;
+    }
+    /* Inner c-link sits on top of the row container — Slack paints its own
+       hover bg on it, which would cover the parent's. Force the inner
+       transparent so our parent hover bg is what shows. Scoped to inside a
+       hovered row so we don't blow away c-link styling elsewhere. */
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__channel"]:hover [class*="c-link"],
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__link"]:hover [class*="c-link"] {
+      background-color: transparent !important;
     }
     /* Background + border-radius for the selected pill are painted inline by
        paintActiveRows() — only on the innermost selected element — so the
        row wrapper and its inner button don't stack two pills. CSS here just
        strips Slack's default outline / box-shadow / border on selected rows
-       and forces our text color. */
-    html body [class*="channel_sidebar"] [class*="--selected"],
-    html body [class*="channel_sidebar"] [class*="--active"],
-    html body [class*="channel_sidebar"] [aria-selected="true"],
-    html body [class*="channel_sidebar"] [aria-current="true"],
-    html body [class*="channel_sidebar"] [aria-current="page"],
-    html body [class*="channel_sidebar__channel--selected"],
-    html body [class*="sidebar_link--selected"],
-    html body [class*="p-channel_sidebar__channel--selected"],
-    html body [class*="virtual_list__item--selected"] {
+       and forces our text color. Anchors are class-prefix-specific so we
+       don't catch unrelated --active elements (e.g. c-presence--active on
+       the avatar online-dot). */
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__channel--selected"],
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__channel--active"] {
       color: var(--omarchy-fg) !important;
       outline: none !important;
       box-shadow: none !important;
       border-color: transparent !important;
     }
-    html body [class*="channel_sidebar__channel--selected"] *,
-    html body [class*="sidebar_link--selected"] *,
-    html body [aria-selected="true"][class*="sidebar"] * {
+    html body [class*="p-channel_sidebar__channel--selected"] *,
+    html body [class*="p-channel_sidebar__channel--active"] * {
       color: var(--omarchy-fg) !important;
       background-color: transparent !important;
     }
@@ -338,12 +342,14 @@ function applyTheme(theme) {
       color: var(--omarchy-fg) !important;
     }
 
-    /* search input pill */
+    /* search input pill — transparent so the themed top-nav chrome shows
+       through. Slack's default fills it with a contrasting surface color
+       that reads as an unthemed white/grey rectangle against our chrome. */
     html body [class*="top_nav__search"],
     html body [class*="search_input"],
     html body [class*="p-top_nav__search_container"],
     html body [class*="p-top_nav__search"] {
-      background-color: var(--omarchy-bg) !important;
+      background-color: transparent !important;
       color: var(--omarchy-fg) !important;
       border-color: var(--omarchy-border) !important;
     }
@@ -356,6 +362,12 @@ function applyTheme(theme) {
             reading as a separate boxed region. ===== */
     html body [class*="p-message_pane_header"],
     html body [class*="p-message_pane__tab"],
+    html body [class*="p-message_view_header"],
+    html body [class*="p-view_header__title"],
+    html body [class*="p-workspace__primary_view_header"],
+    html body [class*="channel_tab_bar"],
+    html body [class*="channel_tab_"],
+    html body [class*="draggable_tabs"],
     html body [class*="p-tab_container"],
     html body [class*="p-view_header__tab"],
     html body [class*="p-view_header__actions"],
@@ -369,6 +381,20 @@ function applyTheme(theme) {
       background-color: var(--omarchy-bg) !important;
       color: var(--omarchy-fg) !important;
       border-color: transparent !important;
+    }
+
+    /* "Jump to first unread" / "N new messages" floating pill at the top of
+       the message pane. Painted with the theme accent so it pops, with text
+       in theme.bg for contrast against the saturated fill. */
+    html body [class*="p-message_pane__unread_banner__msg"],
+    html body [class*="p-message_pane__unread_banner"] button {
+      background-color: var(--omarchy-accent) !important;
+      color: var(--omarchy-bg) !important;
+    }
+    html body [class*="p-message_pane__unread_banner__msg"] *,
+    html body [class*="p-message_pane__unread_banner"] button * {
+      color: var(--omarchy-bg) !important;
+      fill: currentColor !important;
     }
 
     /* (Removed the aggressive "transparent" rule for view_header / message_pane_header
@@ -413,6 +439,39 @@ function applyTheme(theme) {
       color: var(--omarchy-fg) !important;
     }
 
+    /* Top-banner container that hosts the floating "Search messages…" pill.
+       The container paints a solid rectangle behind the rounded pill, which
+       reads as an unthemed dark box around it. Make the container
+       transparent so just the pill shows. */
+    html body [class*="p-message_pane__top_banners"] {
+      background-color: transparent !important;
+    }
+
+    /* Slack applies a top-edge fade mask on the message list via
+       c-scrollbar--fade so content fades out as it scrolls past the tab
+       bar. Against our themed bg this reads as a transparent strip where
+       messages bleed through. Kill the mask. */
+    html body [class*="c-scrollbar--fade"],
+    html body [class*="c-message_list"] {
+      -webkit-mask-image: none !important;
+      mask-image: none !important;
+    }
+
+    /* "Today" / date-jump pill in the message list — paint with the theme
+       accent (matching the tab-rail unread badges). Chained with day_divider
+       ancestor so this rule's specificity beats the generic
+       [class*="day_divider"] button rule above. */
+    html body [class*="day_divider"] [class*="__label__pill"],
+    html body button[class*="c-message_list__day_divider__label__pill"] {
+      background-color: var(--omarchy-accent) !important;
+      color: var(--omarchy-bg) !important;
+    }
+    html body [class*="day_divider"] [class*="__label__pill"] *,
+    html body button[class*="c-message_list__day_divider__label__pill"] * {
+      color: var(--omarchy-bg) !important;
+      fill: currentColor !important;
+    }
+
     /* ===== message composer / input area =====
        Outer wrappers blend with the message pane (same bg, no border) so the
        composer doesn't read as a separate filled rectangle. The inner editable
@@ -432,15 +491,30 @@ function applyTheme(theme) {
     html body [class*="p-message_input"],
     html body [class*="p-message_input__primary_container"],
     html body [class*="c-texty_input"],
+    html body [class*="c-texty_input_unstyled"],
+    html body [class*="texty_input_unstyled__container"],
     html body [class*="ql-toolbar"],
     html body [class*="ql-container"],
     html body [class*="ql-editor"],
+    html body [class*="ql-placeholder"],
     html body [class*="texty_input_unstyled"],
     html body [data-qa="message_input"],
     html body [contenteditable="true"][data-qa*="message"],
     html body [contenteditable="true"][aria-label*="message" i] {
-      background-color: ${shade(theme.bg, dir * 0.04)} !important;
+      background-color: transparent !important;
       color: var(--omarchy-fg) !important;
+      border-color: var(--omarchy-border) !important;
+    }
+
+    /* Slack's "theme_light_bordered" modifier on the composer container
+       paints a hard white box on light themes — make it transparent so the
+       outer composer color shows. Scoped to texty_input/ql so we don't blow
+       a hole through bordered headers/dividers elsewhere. */
+    html body [class*="texty_input"][class*="theme_light_bordered"],
+    html body [class*="texty_input"][class*="--theme_light"],
+    html body [class*="texty_input"][class*="--bordered"],
+    html body [class*="ql-container"][class*="theme_light_bordered"] {
+      background-color: transparent !important;
       border-color: var(--omarchy-border) !important;
     }
 
@@ -448,6 +522,14 @@ function applyTheme(theme) {
     html body [contenteditable="true"][data-qa*="message"]::before,
     html body [class*="ql-editor"].ql-blank::before {
       color: ${withAlpha(fg, 0.5)} !important;
+    }
+
+    /* The empty <p><br></p> Quill inserts in the editor renders with its own
+       background on some Slack builds — force transparent so it inherits the
+       editor's "input field" shade instead of showing as a stripe. */
+    html body [class*="ql-editor"] p,
+    html body [contenteditable="true"][data-qa*="message"] p {
+      background-color: transparent !important;
     }
 
     /* ===== unread / notification badges =====
@@ -612,12 +694,13 @@ function paintActiveRows() {
   const accent = theme.accent || (isDark ? "#7aa2f7" : "#1264a3");
   const pillBg = withAlpha(accent, 0.35);
 
+  // Class-prefix-specific anchors so we don't accidentally paint pills on
+  // avatar online-dots (c-presence--active) or top-level nav items
+  // (p-channel_sidebar__link--page on Unreads/Huddles/etc — those keep
+  // Slack's default treatment, no pill).
   const selector =
-    '[class*="channel_sidebar"] [class*="--selected"], ' +
-    '[class*="channel_sidebar"] [class*="--active"], ' +
-    '[class*="channel_sidebar"] [aria-selected="true"], ' +
-    '[class*="channel_sidebar"] [aria-current="true"], ' +
-    '[class*="channel_sidebar"] [aria-current="page"]';
+    '[class*="channel_sidebar"] [class*="p-channel_sidebar__channel--selected"], ' +
+    '[class*="channel_sidebar"] [class*="p-channel_sidebar__channel--active"]';
   const matches = Array.from(document.querySelectorAll(selector));
   if (!matches.length) return;
 
