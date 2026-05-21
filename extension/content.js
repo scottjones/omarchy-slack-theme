@@ -310,6 +310,14 @@ function applyTheme(theme) {
     html body [class*="channel_sidebar"] [class*="p-channel_sidebar__link"]:hover [class*="c-link"] {
       background-color: transparent !important;
     }
+    /* Slack paints a darker per-name highlight on the channel-name span
+       inside the row on hover (visible on rows with "--unread" or other
+       state modifiers). Force every descendant of a hovered row to
+       transparent so only the outer pill bg shows. Badges keep their fill. */
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__channel"]:hover *:not([class*="badge"]):not([class*="mention"]):not([class*="unread_count"]):not([class*="c-mention"]),
+    html body [class*="channel_sidebar"] [class*="p-channel_sidebar__link"]:hover *:not([class*="badge"]):not([class*="mention"]):not([class*="unread_count"]):not([class*="c-mention"]) {
+      background-color: transparent !important;
+    }
     /* Background + border-radius for the selected pill are painted inline by
        paintActiveRows() — only on the innermost selected element — so the
        row wrapper and its inner button don't stack two pills. CSS here just
