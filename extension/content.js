@@ -974,6 +974,36 @@ function logDialogDetails(prefix) {
   if (iframes.length) console.warn("[omarchy] iframes on page:", iframes.length);
 }
 
+async function ensureHomeTabActive() {
+  // The workspace-actions menu only contains "Preferences" when the Home tab
+  // is active — on DMs/Activity/Files/Later the menu has a different item
+  // set and Preferences is absent. Always click Home before opening; if
+  // we're already there the click is a cheap no-op. (Slack's "active tab"
+  // marker varies, so we don't try to short-circuit on aria-selected.)
+  const homeTab =
+    document.querySelector('[data-qa="tab_rail_home_button"]') ||
+    document.querySelector('button[aria-label="Home"][role="tab"]') ||
+    document.querySelector('[class*="tab_rail"] button[aria-label="Home"]') ||
+    document.querySelector('[class*="tab_rail"] [aria-label="Home"]') ||
+    document.querySelector('[aria-label="Home"][class*="tab"]');
+  if (!homeTab) {
+    console.warn("[omarchy] Home tab button not found; menu may lack Preferences");
+    return;
+  }
+  console.log("[omarchy] activating Home tab for menu access");
+  dispatchClick(homeTab);
+  try { homeTab.click(); } catch (_) {}
+  // Wait for the sidebar to mount the workspace-actions button (it only
+  // exists when Home is active — its appearance is our signal Home is up).
+  await waitFor(
+    () =>
+      document.querySelector('[data-qa="workspace_actions_button"]') ||
+      document.querySelector('[data-qa*="workspace_actions"]'),
+    2000
+  );
+  await sleep(150);
+}
+
 async function openPreferencesDialog() {
   // Try keyboard once (cheap), then go straight to the menu path. Synthetic
   // Ctrl+, doesn't seem to land in Brave on Linux, so don't burn 15s retrying.
@@ -984,6 +1014,9 @@ async function openPreferencesDialog() {
     console.log("[omarchy] preferences opened via keyboard");
     return kbModal;
   }
+
+  // The menu path requires the Home tab to be active.
+  await ensureHomeTabActive();
 
   console.log("[omarchy] using workspace-actions menu");
   // Exact selector confirmed via DOM inspection: the "Pay Ready Actions"
