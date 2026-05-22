@@ -554,6 +554,57 @@ function applyTheme(theme) {
       background-color: transparent !important;
     }
 
+    /* ===== DMs / Activity tab list items =====
+       Slack paints these p-activity_ia4_page rows + the page container with
+       their own dark surface + divider lines that don't match our themed
+       pane. Paint the page itself with the sidebar bg so it reads like the
+       Home sidebar, flatten the rows, and give hovered/selected rows our
+       sidebar-style accent pill. */
+    html body [class*="p-activity_ia4_page"]:not([class*="__item"]):not([class*="__senders"]),
+    html body [class*="p-dms_page"],
+    html body [class*="p-activity_page"],
+    html body [class*="p-direct_messages"],
+    html body [class*="c-virtual_list"][aria-label*="Direct messages" i],
+    html body [class*="c-virtual_list"][aria-label*="Direct messages" i] [class*="c-scrollbar__hider"],
+    html body [class*="c-virtual_list"][aria-label*="Direct messages" i] [class*="c-virtual_list__scroll_container"] {
+      background-color: var(--omarchy-sidebar-bg) !important;
+    }
+    html body [class*="p-activity_ia4_page__item"],
+    html body [class*="p-dms_channel"],
+    html body [class*="p-activity_ia4_page__item_container"] {
+      background-color: transparent !important;
+      border-color: transparent !important;
+      box-shadow: none !important;
+    }
+    /* Row hover pill — matches the home sidebar's hover treatment. */
+    html body [class*="p-activity_ia4_page__item_container"]:hover,
+    html body [class*="p-activity_ia4_page__item"]:hover {
+      background-color: var(--omarchy-hover-bg) !important;
+      border-radius: 8px !important;
+    }
+    /* Kill the per-name inner highlight Slack paints on hover so only the
+       outer row pill shows. Badges/mentions keep their own accent fill. */
+    html body [class*="p-activity_ia4_page__item_container"]:hover *:not([class*="badge"]):not([class*="mention"]):not([class*="c-mention"]),
+    html body [class*="p-activity_ia4_page__item"]:hover *:not([class*="badge"]):not([class*="mention"]):not([class*="c-mention"]) {
+      background-color: transparent !important;
+    }
+    /* Selected pill — strengthened with [data-qa] anchor so it beats any
+       Slack rule painting the inner c-message_kit__message surface. */
+    html body [data-qa="dms_channel"] [class*="p-activity_ia4_page__item--selected"],
+    html body [class*="p-activity_ia4_page__item--selected--dm"],
+    html body [class*="p-activity_ia4_page__item--selected"] {
+      background-color: var(--omarchy-selected-bg) !important;
+      border-radius: 8px !important;
+    }
+    html body [class*="p-activity_ia4_page__item"] *,
+    html body [class*="p-dms_channel"] * {
+      background-color: transparent !important;
+    }
+    html body [class*="p-activity_ia4_page"] *:not([class*="badge"]):not([class*="mention"]):not(svg):not(path),
+    html body [class*="p-dms_channel"] *:not([class*="badge"]):not([class*="mention"]):not(svg):not(path) {
+      color: var(--omarchy-fg) !important;
+    }
+
     /* ===== unread / notification badges =====
        Tab rail badges (the "14" on Activity, "16" on Later) and sidebar
        unread/mention badges. Slack ships them in a muted/translucent token
