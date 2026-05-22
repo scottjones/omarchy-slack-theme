@@ -433,18 +433,18 @@ function applyTheme(theme) {
             horizontal line and any message text behind it. Uses a neutral
             shade (not the accent-tinted navBg) so the pill stays unobtrusive
             in the message flow. ===== */
-    html body [class*="day_divider"] [class*="label"],
-    html body [class*="day_divider"] button,
-    html body [class*="day_divider__label"],
-    html body [class*="date_divider"] [class*="label"],
-    html body [class*="date_divider"] button,
-    html body [class*="divider__label"],
     html body [class*="new_messages_marker"],
     html body [class*="new_messages_pill"],
     html body [class*="unread_divider"] [class*="label"],
     html body [class*="unread_divider"] button {
       background-color: ${shade(theme.bg, dir * 0.05)} !important;
       color: var(--omarchy-fg) !important;
+    }
+
+    /* Day-divider label container — transparent so only the inner pill
+       shows its own accent fill; the surrounding row stays flat. */
+    html body [class*="c-message_list__day_divider__label"] {
+      background-color: transparent !important;
     }
 
     /* Top-banner container that hosts the floating "Search messages…" pill.
@@ -463,6 +463,20 @@ function applyTheme(theme) {
     html body [class*="c-message_list"] {
       -webkit-mask-image: none !important;
       mask-image: none !important;
+    }
+
+    /* Horizontal date-separator line that runs behind the day-divider pill.
+       Slack draws it with a contrasting color that reads as a dark stripe
+       across our themed message pane (especially when the pill sticks at
+       the top of the scroll area). Use a subtle theme border instead. The
+       outer day_divider wrapper has its own thicker bg — flatten that too. */
+    html body [class*="c-message_list__day_divider"]:not([class*="__label"]):not([class*="__line"]) {
+      background-color: transparent !important;
+    }
+    html body [class*="c-message_list__day_divider__line"] {
+      background-color: transparent !important;
+      border-top-color: var(--omarchy-border) !important;
+      border-bottom-color: var(--omarchy-border) !important;
     }
 
     /* "Today" / date-jump pill in the message list — paint with the theme
