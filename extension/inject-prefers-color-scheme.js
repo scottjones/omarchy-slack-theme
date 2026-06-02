@@ -104,6 +104,27 @@
       return;
     }
 
+    // 0. If the target is (or wraps) a native radio/checkbox, drive it with a
+    //    real click. That sets .checked AND fires the event Slack's delegated
+    //    React listener responds to (target.checked correct). This beats
+    //    calling onChange with a fabricated event, which leaves .checked false
+    //    — Slack's current handler reads target.checked and ignores it.
+    const nativeInput = el.matches('input[type="radio"], input[type="checkbox"]')
+      ? el
+      : el.querySelector('input[type="radio"], input[type="checkbox"]');
+    if (nativeInput) {
+      console.log("[omarchy bridge] native click on radio/checkbox input");
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "checked"
+      ).set;
+      try { setter.call(nativeInput, true); } catch (_) {}
+      nativeInput.dispatchEvent(new Event("input", { bubbles: true }));
+      nativeInput.dispatchEvent(new Event("change", { bubbles: true }));
+      try { nativeInput.click(); } catch (_) {}
+      return;
+    }
+
     // 1. Try element itself + walk up to the radiogroup / dialog boundary
     let cur = el;
     for (let i = 0; i < 6 && cur; i++) {

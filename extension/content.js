@@ -1163,12 +1163,25 @@ async function clickAppearanceTab(_modal) {
 }
 
 function findColorModeRadio(target) {
-  // Anchor on the actual color-mode radio inputs — Slack uses class
-  // `themeRadio__...` (CSS module hashed) on the hidden <input>. The visible
-  // label is in the wrapper DIV.
+  // Anchor on the color-mode radio group by `name="color-mode"` and the
+  // value ("light"/"dark"). This is precise: the Appearance pane now renders
+  // ~50 theme-preset swatches that share the same hashed `themeRadio__...`
+  // class on their <input>s, so matching on class alone is ambiguous.
+  // Return the wrapper DIV (carries the `boxContainerSelected` marker class).
+  const value = target.toLowerCase();
+  const input =
+    document.querySelector(
+      `input[type="radio"][name="color-mode"][value="${value}"]`
+    ) ||
+    document.querySelector(`input[type="radio"][aria-label="${target}" i]`);
+  if (input) {
+    return input.closest('[class*="boxContainer"]') || input.parentElement;
+  }
+
+  // Fallback for older Slack builds: text-match the wrapper.
   const inputs = document.querySelectorAll('input[type="radio"][class*="themeRadio"]');
-  for (const input of inputs) {
-    const wrapper = input.closest('[class*="boxContainer"]');
+  for (const inp of inputs) {
+    const wrapper = inp.closest('[class*="boxContainer"]');
     if (!wrapper) continue;
     if ((wrapper.innerText || wrapper.textContent || "").trim() === target) {
       return wrapper;
@@ -1178,10 +1191,14 @@ function findColorModeRadio(target) {
 }
 
 function isRadioSelected(wrapperEl) {
-  // Source of truth: the <input>'s .checked property. The wrapper's
-  // `boxContainerSelected` class can lag behind during state loading.
+  // Source of truth: the wrapper's `boxContainerSelected` modifier class —
+  // that's what Slack toggles to mark the active color mode. The <input>'s
+  // .checked property is NOT reliably set on these controlled radios (the
+  // selected one carries no `checked` attribute), so fall back to it only
+  // as a secondary signal.
   if (!wrapperEl) return false;
-  const input = wrapperEl.querySelector('input[type="radio"][class*="themeRadio"]');
+  if (/boxContainerSelected/.test(wrapperEl.className || "")) return true;
+  const input = wrapperEl.querySelector('input[type="radio"]');
   return !!(input && input.checked);
 }
 
@@ -1204,14 +1221,28 @@ async function clickColorModeButton(_modal, target) {
     return true;
   }
 
-  console.log(`[omarchy] clicking ${target} radio`);
+  const input = btn.querySelector('input[type="radio"]');
+
+  // Primary: a real native click on the actual <input>. This both checks the
+  // radio AND fires the click event Slack's delegated React listener responds
+  // to — exactly like a user click, so onChange sees target.checked === true.
+  // (Synthetic MouseEvents on the wrapper don't toggle the control, and
+  // calling React's onChange with a fabricated event leaves .checked false,
+  // which Slack's current handler ignores.)
+  if (input) {
+    console.log(`[omarchy] clicking ${target} radio (native input.click)`);
+    try { input.click(); } catch (_) {}
+    if (await waitFor(() => isRadioSelected(findColorModeRadio(target)), 800)) return true;
+  }
+
+  console.log(`[omarchy] native click didn't take; dispatching events for ${target}`);
   dispatchClick(btn);
 
   const verified = await waitFor(() => isRadioSelected(findColorModeRadio(target)), 800);
   if (verified) return true;
 
   console.log(`[omarchy] dispatchClick didn't take; using React handler for ${target}`);
-  reactClick(btn);
+  reactClick(input || btn);
 
   const reverified = await waitFor(
     () => isRadioSelected(findColorModeRadio(target)),
@@ -1302,15 +1333,20 @@ async function ensureSlackColorMode(targetIsDark) {
       }
       if (!(await clickAppearanceTab(modal))) {
         console.warn("[omarchy] could not click Appearance tab");
+        await closeDialog();
         return;
       }
       await sleep(200);
-      if (!(await clickColorModeButton(modal, target))) {
+      const clicked = await clickColorModeButton(modal, target);
+      await sleep(150);
+      // Always close the dialog — even if we couldn't verify the click, the
+      // change may have applied, and leaving Preferences open is the most
+      // visible failure mode.
+      await closeDialog();
+      if (!clicked) {
         console.warn("[omarchy] could not click", target, "button");
         return;
       }
-      await sleep(150);
-      await closeDialog();
 
       lastAppliedMode = target;
       chrome.storage.local.set({ lastSlackMode: target });
