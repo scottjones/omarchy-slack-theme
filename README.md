@@ -22,6 +22,8 @@ Chromium with one flag change to `install.sh`.
   native-messaging host polls `~/.config/omarchy/current/` and sends the new
   state to the extension within a second.
 
+https://github.com/user-attachments/assets/0ce6a3ac-c82f-4848-85be-537d6f00fae2
+
 ## How it works
 
 ```
