@@ -66,6 +66,17 @@ unpacked extension.
 - Theme-derived values come from CSS vars (`--omarchy-bg`, `--omarchy-fg`,
   `--omarchy-accent`, `--omarchy-sidebar-bg`, `--omarchy-hover-bg`,
   `--omarchy-selected-bg`, `--omarchy-fg-strong`). Use these rather than literals.
+- The whole CSS block is a **JS template literal** (backtick-delimited string).
+  Never put a backtick `` ` `` or `${` inside it — *including inside `/* */`
+  comments*. They're live template-literal syntax even in a comment, so a stray
+  backtick silently terminates the string and the entire content script fails to
+  parse (symptom: `Uncaught SyntaxError` and **all** theming disappears).
+- Some surfaces (e.g. the rail/sidebar, and the Activity/Threads `All|VIP` tab
+  strip — `p-activity_ia4_page__tab_menu` / `__tab_container`) are painted by
+  Slack **inline with `!important`**, which beats even our high-specificity
+  `!important` CSS. Those can't be fixed in the stylesheet — paint them inline
+  via `setProperty(..., "important")` and re-run on the MutationObserver. See
+  `paintTabStrips()` / `paintActiveRows()`.
 
 ## Dev / test workflow
 

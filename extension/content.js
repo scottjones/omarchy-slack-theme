@@ -632,7 +632,7 @@ function applyTheme(theme) {
     html body [class*="p-activity_ia4_page__tab_container"] [class*="c-tabs__tab"],
     html body [class*="p-activity_ia4_page__filter_bar"] [class*="p-refine_button"],
     html body [class*="p-activity_ia4_page__filter_bar"] [class*="c-button"],
-    /* extra anchors to out-specify the broad `c-tabs → --omarchy-bg` rule
+    /* extra anchors to out-specify the broad c-tabs -> --omarchy-bg rule
        above — covers both the tab content wells and the "+" add-tab button
        (both are c-tabs__tab elements). */
     html body [class*="activity_layout_header"] [class*="draggable_tabs"] [class*="c-tabs__tab"]:not([data-qa="tabs_full_width_class"]) {
@@ -790,6 +790,7 @@ function applyTheme(theme) {
   // re-runs this on every relevant attribute change in the sidebar, so it
   // keeps winning even after Slack re-renders.
   paintActiveRows();
+  paintTabStrips();
 }
 
 // Track elements we've painted so we can wipe their inline styles when the
@@ -851,6 +852,26 @@ function paintActiveRows() {
   }
 }
 
+// Paint the Activity/Threads "All / VIP" tab strip inline. Slack paints the
+// tab_menu (data-qa="tabs_full_width_class") and the tab_container with its own
+// surface token inline-with-important, which beats even our high-specificity
+// !important CSS (both our rules on tab_container lose the cascade) — so we
+// override it inline on the element itself, the same trick we use to win back
+// the rail/sidebar bg. The Activity feed and the Threads view use these same
+// p-activity_ia4_page__tab_* classes, so this covers both. We deliberately
+// scope to the p-activity_ia4_page__ prefix so the Preferences modal's
+// tabs_full_width_class menu is untouched.
+function paintTabStrips() {
+  if (!lastAppliedTheme || !lastAppliedTheme.bg) return;
+  const bg = lastAppliedTheme.bg;
+  const els = document.querySelectorAll(
+    '[class*="p-activity_ia4_page__tab_menu"], [class*="p-activity_ia4_page__tab_container"]'
+  );
+  for (const el of els) {
+    el.style.setProperty("background-color", bg, "important");
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "omarchy-theme") applyTheme(msg.theme);
 });
@@ -898,6 +919,7 @@ function schedulePaintActiveRows() {
   activeRowsRaf = requestAnimationFrame(() => {
     activeRowsRaf = 0;
     paintActiveRows();
+    paintTabStrips();
   });
 }
 const activeRowsObserver = new MutationObserver(schedulePaintActiveRows);
