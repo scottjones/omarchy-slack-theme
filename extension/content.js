@@ -559,8 +559,16 @@ function applyTheme(theme) {
        their own dark surface + divider lines that don't match our themed
        pane. Paint the page itself with the sidebar bg so it reads like the
        Home sidebar, flatten the rows, and give hovered/selected rows our
-       sidebar-style accent pill. */
+       sidebar-style accent pill.
+
+       Slack's redesigned Activity feed (activity_inbox / design_v3) renamed
+       the row classes: the page-scoped p-activity_ia4_page__item* became
+       hashed activity_row_content_container__*, the scroll area became
+       p-view_sidebar--list--activity_inbox, and the per-sender avatar box
+       became activity_row_content__sender_icon_container__*. Both naming
+       schemes are matched below so the theme covers old and new builds. */
     html body [class*="p-activity_ia4_page"]:not([class*="__item"]):not([class*="__senders"]),
+    html body [class*="p-view_sidebar--list--activity_inbox"],
     html body [class*="p-dms_page"],
     html body [class*="p-activity_page"],
     html body [class*="p-direct_messages"],
@@ -571,28 +579,36 @@ function applyTheme(theme) {
     }
     html body [class*="p-activity_ia4_page__item"],
     html body [class*="p-dms_channel"],
-    html body [class*="p-activity_ia4_page__item_container"] {
+    html body [class*="p-activity_ia4_page__item_container"],
+    html body [class*="activity_row_content_container"],
+    html body [class*="activity_row_content__sender_icon_container"],
+    html body [class*="activity_row_content__status_icon"] {
       background-color: transparent !important;
       border-color: transparent !important;
       box-shadow: none !important;
     }
     /* Row hover pill — matches the home sidebar's hover treatment. */
     html body [class*="p-activity_ia4_page__item_container"]:hover,
-    html body [class*="p-activity_ia4_page__item"]:hover {
+    html body [class*="p-activity_ia4_page__item"]:hover,
+    html body [class*="activity_row_content_container"]:hover {
       background-color: var(--omarchy-hover-bg) !important;
       border-radius: 8px !important;
     }
     /* Kill the per-name inner highlight Slack paints on hover so only the
        outer row pill shows. Badges/mentions keep their own accent fill. */
     html body [class*="p-activity_ia4_page__item_container"]:hover *:not([class*="badge"]):not([class*="mention"]):not([class*="c-mention"]),
-    html body [class*="p-activity_ia4_page__item"]:hover *:not([class*="badge"]):not([class*="mention"]):not([class*="c-mention"]) {
+    html body [class*="p-activity_ia4_page__item"]:hover *:not([class*="badge"]):not([class*="mention"]):not([class*="c-mention"]),
+    html body [class*="activity_row_content_container"]:hover *:not([class*="badge"]):not([class*="mention"]):not([class*="c-mention"]):not([class*="unread_indicator"]) {
       background-color: transparent !important;
     }
     /* Selected pill — strengthened with [data-qa] anchor so it beats any
-       Slack rule painting the inner c-message_kit__message surface. */
+       Slack rule painting the inner c-message_kit__message surface. The
+       new build draws selection as a gray inset ring (box-shadow) instead
+       of a fill; box-shadow:none above flattens it, this re-adds our pill. */
     html body [data-qa="dms_channel"] [class*="p-activity_ia4_page__item--selected"],
     html body [class*="p-activity_ia4_page__item--selected--dm"],
-    html body [class*="p-activity_ia4_page__item--selected"] {
+    html body [class*="p-activity_ia4_page__item--selected"],
+    html body [class*="activity_row_content_container--selected"] {
       background-color: var(--omarchy-selected-bg) !important;
       border-radius: 8px !important;
     }
@@ -603,6 +619,41 @@ function applyTheme(theme) {
     html body [class*="p-activity_ia4_page"] *:not([class*="badge"]):not([class*="mention"]):not(svg):not(path),
     html body [class*="p-dms_channel"] *:not([class*="badge"]):not([class*="mention"]):not(svg):not(path) {
       color: var(--omarchy-fg) !important;
+    }
+    /* Activity feed header — kill the dark "splotches". Slack paints the
+       tab content wells (c-tabs__tab_content + draggable_tabs containers)
+       and the filter/search/sort buttons (p-refine_button / c-button) with
+       its own dark surface tokens, which sit darker than our themed header
+       and read as random dark rectangles behind the tab counts and icons.
+       Flatten them so they inherit the header's sidebar bg. Scoped to the
+       Activity header/filter bar so channel tabs elsewhere are untouched. */
+    html body [class*="activity_layout_header"] [class*="draggable_tabs"],
+    html body [class*="p-activity_ia4_page__tab_container"],
+    html body [class*="p-activity_ia4_page__tab_container"] [class*="c-tabs__tab"],
+    html body [class*="p-activity_ia4_page__filter_bar"] [class*="p-refine_button"],
+    html body [class*="p-activity_ia4_page__filter_bar"] [class*="c-button"],
+    /* extra anchors to out-specify the broad `c-tabs → --omarchy-bg` rule
+       above — covers both the tab content wells and the "+" add-tab button
+       (both are c-tabs__tab elements). */
+    html body [class*="activity_layout_header"] [class*="draggable_tabs"] [class*="c-tabs__tab"]:not([data-qa="tabs_full_width_class"]) {
+      background-color: transparent !important;
+    }
+    /* Tab unread counts ("10" on All, "5" on Mentions): brand them as accent
+       pills so they pop instead of reading as bare red numbers, matching the
+       tab-rail/sidebar badge treatment. High enough specificity to beat the
+       broad p-activity_ia4_page sidebar-bg rule. */
+    html body [class*="activity_layout_header"] [class*="c-tabs__tab_content"] [class*="unread_badge"] {
+      background-color: var(--omarchy-accent) !important;
+      color: var(--omarchy-bg) !important;
+      border-radius: 9999px !important;
+      padding: 0 6px !important;
+      min-width: 18px !important;
+      text-align: center !important;
+      opacity: 1 !important;
+    }
+    html body [class*="activity_layout_header"] [class*="c-tabs__tab_content"] [class*="unread_badge"] * {
+      color: var(--omarchy-bg) !important;
+      background-color: transparent !important;
     }
 
     /* ===== unread / notification badges =====
