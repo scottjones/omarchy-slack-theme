@@ -1142,22 +1142,44 @@ async function openPreferencesDialog() {
 
   console.log("[omarchy] activating Preferences menu item:", prefsItem.outerHTML.slice(0, 140));
 
-  // Try several activation strategies in sequence — Slack's menu items may
-  // respond to keyboard Enter rather than a synthetic click.
-  prefsItem.focus();
-  dispatchClick(prefsItem);
+  // Slack's current build ignores a synthetic dispatchClick on these menu
+  // items — only a native .click() (and sometimes Enter) actually opens the
+  // dialog. So lead with click()/Enter and keep dispatchClick as a last
+  // resort. Retry the whole activation a few times, re-finding the item fresh
+  // each round: the menu occasionally re-renders and leaves us holding a
+  // stale node, which showed up as an intermittent "could not open" failure.
+  const findPrefsItem = () => {
+    const items = menu.querySelectorAll(
+      '[role="menuitem"], button, [data-qa="menu_item_button"]'
+    );
+    for (const el of items) {
+      if ((el.innerText || el.textContent || "").trim() === "Preferences") return el;
+    }
+    return null;
+  };
 
-  modal = await waitFor(() => findPrefsDialog(), 1500);
-  if (!modal) {
-    console.log("[omarchy] dispatchClick didn't open prefs; trying native click()");
-    try { prefsItem.click(); } catch (_) {}
-    modal = await waitFor(() => findPrefsDialog(), 1500);
-  }
-  if (!modal) {
+  let modal = null;
+  for (let attempt = 0; attempt < 3 && !modal; attempt++) {
+    const item = findPrefsItem() || prefsItem;
+    if (!item || !item.isConnected) {
+      console.log("[omarchy] Preferences menu item went stale before it opened prefs");
+      break;
+    }
+
+    item.focus();
+    try { item.click(); } catch (_) {}
+    modal = await waitFor(() => findPrefsDialog(), 1200);
+    if (modal) break;
+
     console.log("[omarchy] native click() didn't open prefs; trying Enter key");
-    prefsItem.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-    prefsItem.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-    modal = await waitFor(() => findPrefsDialog(), 2000);
+    item.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    item.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    modal = await waitFor(() => findPrefsDialog(), 1200);
+    if (modal) break;
+
+    console.log("[omarchy] Enter didn't open prefs; trying dispatchClick");
+    dispatchClick(item);
+    modal = await waitFor(() => findPrefsDialog(), 1200);
   }
 
   console.log("[omarchy] preferences dialog opened via menu:", !!modal);
@@ -1296,25 +1318,33 @@ async function clickColorModeButton(_modal, target) {
 
   const input = btn.querySelector('input[type="radio"]');
 
-  // Primary: a real native click on the actual <input>. This both checks the
-  // radio AND fires the click event Slack's delegated React listener responds
-  // to — exactly like a user click, so onChange sees target.checked === true.
-  // (Synthetic MouseEvents on the wrapper don't toggle the control, and
-  // calling React's onChange with a fabricated event leaves .checked false,
-  // which Slack's current handler ignores.)
+  // The toggle is two-phase: the FIRST interaction only focuses/primes the
+  // control, and the SECOND one actually flips it — so whichever click method
+  // ran first always logged "didn't take" while the second landed it,
+  // regardless of method. Prime the control explicitly (focus + a native
+  // input.click) so the primary dispatchClick below can land on the first try.
   if (input) {
-    console.log(`[omarchy] clicking ${target} radio (native input.click)`);
+    try { input.focus(); } catch (_) {}
+    try { input.click(); } catch (_) {}
+    if (await waitFor(() => isRadioSelected(findColorModeRadio(target)), 300)) return true;
+  }
+
+  // Primary: a synthetic pointer/mouse/click sequence on the wrapper. Slack's
+  // current build responds to THIS but no longer toggles on a native
+  // input.click() alone (that used to be the reliable path).
+  console.log(`[omarchy] clicking ${target} radio (dispatchClick)`);
+  dispatchClick(btn);
+  if (await waitFor(() => isRadioSelected(findColorModeRadio(target)), 800)) return true;
+
+  // Fallback: another native click on the actual <input>, in case the prime +
+  // dispatchClick sequence above didn't land this time.
+  if (input) {
+    console.log(`[omarchy] dispatchClick didn't take; retrying native input.click for ${target}`);
     try { input.click(); } catch (_) {}
     if (await waitFor(() => isRadioSelected(findColorModeRadio(target)), 800)) return true;
   }
 
-  console.log(`[omarchy] native click didn't take; dispatching events for ${target}`);
-  dispatchClick(btn);
-
-  const verified = await waitFor(() => isRadioSelected(findColorModeRadio(target)), 800);
-  if (verified) return true;
-
-  console.log(`[omarchy] dispatchClick didn't take; using React handler for ${target}`);
+  console.log(`[omarchy] native click didn't take; using React handler for ${target}`);
   reactClick(input || btn);
 
   const reverified = await waitFor(
