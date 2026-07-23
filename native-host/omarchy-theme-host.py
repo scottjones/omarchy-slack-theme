@@ -2,9 +2,16 @@
 """
 Native messaging host for the Omarchy Slack Theme extension.
 
-Reads the current Omarchy theme (~/.config/omarchy/current/) and reports the
-background color, foreground color, and accent. Polls for changes once per
-second; pushes an update to the extension whenever the theme changes.
+Reads the active Omarchy theme and reports the background color, foreground
+color, and accent. Polls for changes once per second; pushes an update to the
+extension whenever the theme changes.
+
+Omarchy 4 relocated the 'current' theme state from ~/.config/omarchy/current to
+the XDG state dir ~/.local/state/omarchy/current. The internal layout is
+unchanged (a theme/ dir holding alacritty.toml / colors.toml / chromium.theme,
+plus a theme.name file), so we just try the new location first and fall back to
+the old one for pre-4 installs. omarchy-theme-set replaces current/theme
+wholesale on every switch, so the files' mtimes bump and the poller notices.
 """
 
 import json
@@ -15,7 +22,8 @@ import struct
 import sys
 from pathlib import Path
 
-OMARCHY = Path.home() / ".config" / "omarchy" / "current"
+STATE_CURRENT = Path.home() / ".local" / "state" / "omarchy" / "current"  # Omarchy 4+
+CONFIG_CURRENT = Path.home() / ".config" / "omarchy" / "current"  # pre-4 fallback
 POLL_INTERVAL = 1.0  # seconds
 
 
@@ -80,22 +88,30 @@ def _parse_chromium_theme(path: Path):
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+def _current_dir():
+    """Locate omarchy's 'current' theme-state dir (Omarchy 4 first, then pre-4)."""
+    for base in (STATE_CURRENT, CONFIG_CURRENT):
+        if (base / "theme").exists():
+            return base
+    # Neither present — return the Omarchy 4 path so the parsers apply their own
+    # fallbacks (bg -> #1e1e2e, chrome -> None) instead of crashing.
+    return STATE_CURRENT
+
+
 def get_state():
-    name = _read_text(OMARCHY / "theme.name")
-    day = _read_text(OMARCHY / "theme.day")
-    night = _read_text(OMARCHY / "theme.night")
-    bg = _parse_alacritty_bg(OMARCHY / "theme" / "alacritty.toml")
-    colors = _parse_colors_toml(OMARCHY / "theme" / "colors.toml")
-    chrome = _parse_chromium_theme(OMARCHY / "theme" / "chromium.theme")
+    cur = _current_dir()
+    name = _read_text(cur / "theme.name")
+    bg = _parse_alacritty_bg(cur / "theme" / "alacritty.toml")
+    colors = _parse_colors_toml(cur / "theme" / "colors.toml")
+    chrome = _parse_chromium_theme(cur / "theme" / "chromium.theme")
     if not bg:
         bg = colors.get("background")
     if not bg:
         bg = "#1e1e2e"  # fallback
+    # The extension decides dark vs. light purely from bg luminance, so we don't
+    # report a day/night flag.
     return {
         "theme_name": name,
-        "day_theme": day,
-        "night_theme": night,
-        "is_night": bool(day and night and name == night),
         "bg": bg,
         "fg": colors.get("foreground"),
         "accent": colors.get("accent"),
@@ -109,20 +125,19 @@ def get_state():
 
 def signature():
     """Cheap fingerprint of theme state — bumps whenever the active theme changes."""
+    cur = _current_dir()
     parts = []
     for sub in ("theme.name", "theme/alacritty.toml", "theme/colors.toml", "theme/chromium.theme"):
-        p = OMARCHY / sub
+        p = cur / sub
         try:
             parts.append(int(p.stat().st_mtime_ns))
         except OSError:
             parts.append(0)
-    # The 'theme' entry may be a symlink that gets re-pointed; capture its target too.
-    theme_dir = OMARCHY / "theme"
+    # current/theme is normally a real dir that omarchy-theme-set replaces
+    # wholesale, but older installs symlinked it — capture the target if so.
+    theme_dir = cur / "theme"
     try:
-        if theme_dir.is_symlink():
-            parts.append(os.readlink(theme_dir))
-        else:
-            parts.append("dir")
+        parts.append(os.readlink(theme_dir) if theme_dir.is_symlink() else "dir")
     except OSError:
         parts.append("")
     return tuple(parts)

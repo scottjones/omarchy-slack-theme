@@ -11,15 +11,15 @@ Chromium with one flag change to `install.sh`.
 
 ## What it does
 
-- **Main pane background** matches your terminal's background (read from
-  `~/.config/omarchy/current/theme/alacritty.toml`).
+- **Main pane background** matches your terminal's background (read from the
+  active theme's `alacritty.toml`).
 - **Sidebar, top nav, channel header** are tinted to match your terminal
   color (a couple of shades off so they're visually distinct from the chat).
 - **Slack's Light/Dark Color Mode** flips automatically when you switch
   themes — the extension opens Preferences → Appearance, picks the right
   radio, and closes the dialog (all hidden from view).
 - **Pushes updates instantly** when you switch themes. A small Python
-  native-messaging host polls `~/.config/omarchy/current/` and sends the new
+  native-messaging host polls the active Omarchy theme and sends the new
   state to the extension within a second.
 
 https://github.com/user-attachments/assets/83787af6-7c41-4449-9460-c7f67b21aa5b
@@ -32,14 +32,15 @@ https://github.com/user-attachments/assets/83787af6-7c41-4449-9460-c7f67b21aa5b
 │  native host │ ◄──────────────────────  │  worker (MV3 bg)   │
 │  (stdio)     │                          └────────┬───────────┘
 └──────────────┘                                   │ chrome.tabs.sendMessage
-   reads:                                          ▼
-   ~/.config/omarchy/current/        ┌────────────────────────────┐
-     theme.name                      │  Content script on Slack   │
-     theme.day / theme.night         │  • injects themed CSS      │
-     theme/alacritty.toml            │  • drives the Appearance   │
-     theme/colors.toml               │    radio via Preferences   │
-                                     │    modal automation        │
-                                     └────────────────────────────┘
+   reads (Omarchy 4):                              ▼
+   ~/.local/state/omarchy/current/  ┌────────────────────────────┐
+     theme.name                     │  Content script on Slack   │
+     theme/alacritty.toml           │  • injects themed CSS      │
+     theme/colors.toml              │  • drives the Appearance   │
+     theme/chromium.theme           │    radio via Preferences   │
+                                    │    modal automation        │
+                                    └────────────────────────────┘
+   (pre-4 ~/.config/omarchy/current/ is still supported as a fallback)
 ```
 
 Slack's Color Mode is flipped by:
@@ -61,10 +62,11 @@ background — robust to themes that don't use the obvious day/night naming
 
 - Brave (or Chrome / Chromium) — Manifest V3
 - Python 3.8+
-- Linux + [Omarchy](https://omarchy.org/) with `~/.config/omarchy/current/`
-  populated
-- A terminal config under `~/.config/omarchy/current/theme/alacritty.toml`
-  (the host falls back to `colors.toml` if that's missing)
+- Linux + [Omarchy](https://omarchy.org/) — Omarchy 4
+  (`~/.local/state/omarchy/current/`) or the pre-4 `~/.config/omarchy/current/`
+  location
+- An `alacritty.toml` in the active theme dir (the host falls back to
+  `colors.toml` if that's missing)
 
 ## Install
 

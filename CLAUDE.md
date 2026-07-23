@@ -8,8 +8,10 @@ A small **Manifest V3 browser extension** (Brave/Chrome/Chromium) that makes the
 **Slack web app** (`app.slack.com`) follow the current [Omarchy](https://omarchy.org/)
 theme. It repaints Slack's chrome/sidebar/message pane to match the terminal
 background and auto-flips Slack's Light/Dark Color Mode when you switch omarchy
-themes. A **Python native-messaging host** watches `~/.config/omarchy/current/`
-and pushes theme changes to the extension within ~1s.
+themes. A **Python native-messaging host** watches the active Omarchy theme
+(Omarchy 4's `~/.local/state/omarchy/current/`, or the pre-4
+`~/.config/omarchy/current/` location — same internal layout, relocated to the
+XDG state dir) and pushes theme changes to the extension within ~1s.
 
 This is end-user desktop tooling, not a web service. There is no build step, no
 package manager, and no test suite — it's plain JS + a Python script loaded as an
